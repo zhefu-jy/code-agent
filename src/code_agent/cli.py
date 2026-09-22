@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+# 确保在任意工作目录下直接执行此脚本都能正确找到包
+src_dir = str(Path(__file__).resolve().parent.parent)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+
 from code_agent.core.model import stream_ask
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 
