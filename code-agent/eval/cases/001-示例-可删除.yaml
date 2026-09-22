@@ -1,0 +1,14 @@
+id: "001"
+type: "location"          # location 位置 | behavior 行为 | relation 关系 | boundary 边界
+question: "把这里换成你真实遇到过的问题（示例，可删）"
+
+expected_files: []
+expected_symbols: []
+
+is_unanswerable: false    # 边界类题设为 true：库里没答案，正确回答是"不知道"
+
+intent: "这题想考察什么（人看，不参与自动判定）"
+source: "real"            # real 真实遇到 | constructed 构造
+
+note: ""
+human_verdict: null       # 跑分后填：correct | partially | wrong | unknown
