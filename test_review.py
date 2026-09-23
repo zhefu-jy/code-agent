@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+#测试结构化输出
 # 确保 src 目录在 Python 模块搜索路径中
 src_dir = Path(__file__).resolve().parent / "src"
 if str(src_dir) not in sys.path:
