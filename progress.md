@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-10-08 (Day 5 · W2 S2 引用物理校验与幻觉抓捕实测)
+
+### 一、今日完成模块与代码
+1. **引用物理校验器与契约设计 ([src/code_agent/core/citation.py](src/code_agent/core/citation.py))**：
+   - 深入理解了“大模型无物理读盘能力，必须靠 RAG 上下文拼装”的底层机制；
+   - 定义了 `CitationStatus` 枚举（继承 `(str, Enum)`），清晰区分 `VALID`、`FILE_NOT_FOUND`、`LINE_OUT_OF_BOUNDS`、`INVALID_RANGE`；
+   - 实现了 `CitationValidationResult` 结果契约，运用 `@property` 实现动态派生属性，坚守“单一事实来源（Single Source of Truth）”；
+   - 编写了 `_resolve_file_path()`，实现 CWD 工作目录漂移防御与 `Path(__file__).resolve().parents[3]` 仓库根目录自动回退兜底；
+   - 实现了核心物理校验器 `validate_citation()` 与批量接口 `validate_citations()`，包含 `read_text(encoding="utf-8", errors="replace")` 与 `splitlines()` 跨平台防御。
+2. **单元测试驱动验证（TDD）([tests/test_citation.py](tests/test_citation.py))**：
+   - 编写了 5 组针对校验器的高防御用例（真实文件合法区间、假文件不存在拦截、行号越出文件尾部、第 0 行非法值、多引用批量校验）；
+   - 13 个单元测试全部 100% 极速秒过（0.03s）。
+3. **真实模型连调与钓鱼实验 ([tests/experiment_s2.py](tests/experiment_s2.py))**：
+   - 将 W1 周末的 BM25 检索器与大模型端到端打通；
+   - 故意构造不存在的模块（`RedisDistributedLocker`）和诱导假函数（`export_to_onnx`），验证了铁律 Prompt 成功迫使模型输出“无依据”，未产生盲目自嗨；
+   - 正向实测中真实捕获了 `stream_ask` 从第 23 行偏移到第 21 行的**行号漂移（Line Drift）**现象；
+   - 深度复盘了纯词频 BM25 检索下 `cli.py` 挤占排名，而大模型凭借代码语义理解作为隐式 Reranker 准确捞出 `model.py` 定义处的深层原理。
+
+---
+
+### 📌 【待消化 / 需复习强化的知识点清单】
+
+- [ ] **1. Python `@property` 派生属性的架构价值**：
+  * *复习点*：为什么不在 dataclass 里存冗余的 `is_valid: bool`？如何通过动态计算避免对象内部状态出现自相矛盾？
+- [ ] **2. 运行目录偏移（CWD Drift）与相对路径解析**：
+  * *复习点*：`Path.cwd()` 与 `Path(__file__).resolve().parents[3]` 的分层寻址机制，为什么底层工具库必须具备运行目录自愈能力？
+- [ ] **3. BM25 纯词频检索的硬伤与大模型语义兜底边界**：
+  * *复习点*：为什么 `cli.py` 的 BM25 分数会高于 `model.py`？大模型如何识别出 `def` 关键字？若 Top-K 较小发生截断时会带来什么危机？为 W4 归因与 W5 AST 切块提供动因。
+
+---
+
 ## 2026-09-28 (Day 4 · W2 S1 出处提取与引用铁律)
 
 ### 一、今日完成模块与代码

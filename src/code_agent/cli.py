@@ -37,7 +37,7 @@ def main() -> None:
                 print("⚠️ 请提供要搜索的关键词，例如: /search review_code\n")
                 continue
 
-            results = indexer.search(query, top_k=2)
+            results = indexer.search(query, top_k=3)
             if not results:
                 print(f"🔍 未在代码库中找到与 '{query}' 相关的代码片段。\n")
             else:

@@ -7,8 +7,14 @@ if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
 import pytest
-from code_agent.core.citation import extract_citations, has_no_evidence, Citation
-
+from code_agent.core.citation import (
+    extract_citations,
+    has_no_evidence,
+    Citation,
+    CitationStatus,
+    validate_citation,
+    validate_citations,
+)
 
 def test_extract_standard_range_citation():
     text = "模型工厂函数负责构造不同的模型实例 [src/code_agent/core/model.py:50-64]。"
@@ -86,6 +92,74 @@ def test_has_no_evidence_detection():
     assert has_no_evidence("代码库中未实现 Redis 缓存。") is True
     assert has_no_evidence("该函数定义在 [src/code_agent/core/model.py:50]。") is False
 
+
+
+def test_validate_existing_file_valid():
+    """测试 1：真实存在的文件且行号合法，必须通过校验"""
+    citation = Citation(
+        file_path="src/code_agent/core/model.py",
+        start_line=1,
+        end_line=20,
+        raw_text="[src/code_agent/core/model.py:1-20]"
+    )
+    res = validate_citation(citation)
+    assert res.is_valid is True
+    assert res.status == CitationStatus.VALID
+    assert res.total_lines is not None and res.total_lines > 0
+
+
+def test_validate_file_not_found():
+    """测试 2：虚构不存在的文件，必须报警 FILE_NOT_FOUND"""
+    citation = Citation(
+        file_path="src/code_agent/fake_cache_service.py",
+        start_line=1,
+        end_line=10,
+        raw_text="[src/code_agent/fake_cache_service.py:1-10]"
+    )
+    res = validate_citation(citation)
+    assert res.is_valid is False
+    assert res.status == CitationStatus.FILE_NOT_FOUND
+    assert "物理文件不存在" in res.error_message
+
+
+def test_validate_line_exceed_total_lines():
+    """测试 3：行号越界超出文件末尾，必须报警 LINE_OUT_OF_BOUNDS"""
+    citation = Citation(
+        file_path="src/code_agent/core/model.py",
+        start_line=1,
+        end_line=9999,  # model.py 实际只有几十行
+        raw_text="[src/code_agent/core/model.py:1-9999]"
+    )
+    res = validate_citation(citation)
+    assert res.is_valid is False
+    assert res.status == CitationStatus.LINE_OUT_OF_BOUNDS
+    assert "超出" in res.error_message
+
+
+def test_validate_line_zero_or_negative():
+    """测试 4：起始行号小于 1，必须报警 LINE_OUT_OF_BOUNDS"""
+    citation = Citation(
+        file_path="src/code_agent/core/model.py",
+        start_line=0,
+        end_line=10,
+        raw_text="[src/code_agent/core/model.py:0-10]"
+    )
+    res = validate_citation(citation)
+    assert res.is_valid is False
+    assert res.status == CitationStatus.LINE_OUT_OF_BOUNDS
+
+
+def test_validate_citations_batch():
+    """测试 5：批量校验，正确和错误的混合输入"""
+    citations = [
+        Citation("src/code_agent/core/model.py", 1, 10, "[...]"),
+        Citation("src/code_agent/non_existent.py", 1, 5, "[...]"),
+    ]
+    results = validate_citations(citations)
+    assert len(results) == 2
+    assert results[0].is_valid is True
+    assert results[1].is_valid is False
+    assert results[1].status == CitationStatus.FILE_NOT_FOUND
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
