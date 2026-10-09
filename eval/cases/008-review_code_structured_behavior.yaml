@@ -1,0 +1,12 @@
+id: "008"
+type: "behavior"
+question: "review_code 函数是如何利用 LangChain 的结构化输出机制强制模型返回指定 Pydantic 模型的？"
+expected_files:
+  - "src/code_agent/core/model.py"
+expected_symbols:
+  - "review_code"
+  - "with_structured_output"
+is_unanswerable: false
+intent: "考察对 LangChain 结构化输出封装与调用流程的理解"
+source: "real"
+note: "W1 S2 核心：model.with_structured_output(ReviewReport)"

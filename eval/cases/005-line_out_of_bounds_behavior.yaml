@@ -1,0 +1,12 @@
+id: "005"
+type: "behavior"
+question: "当引用结束行号超出物理文件的总行数时，validate_citation 函数会返回什么状态枚举以及怎样的错误提示？"
+expected_files:
+  - "src/code_agent/core/citation.py"
+expected_symbols:
+  - "LINE_OUT_OF_BOUNDS"
+  - "validate_citation"
+is_unanswerable: false
+intent: "考察对行号越界校验分支逻辑与 CitationStatus 状态判定的理解"
+source: "real"
+note: "W2 S2 校验器物理防御分支，捕获模型行号越界幻觉"

@@ -1,0 +1,11 @@
+id: "006"
+type: "behavior"
+question: "tokenize_code 分词函数是如何处理驼峰命名（如 OrderTimeout）和下划线命名的？"
+expected_files:
+  - "src/code_agent/index/bm25_index.py"
+expected_symbols:
+  - "tokenize_code"
+is_unanswerable: false
+intent: "考察对代码专用分词器正则替换与拆词机制的逻辑理解"
+source: "real"
+note: "W1 周末代码分词细节：re.sub 小写后跟大写插入空格"

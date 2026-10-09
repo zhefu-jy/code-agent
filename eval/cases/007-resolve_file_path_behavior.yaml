@@ -1,0 +1,12 @@
+id: "007"
+type: "behavior"
+question: "_resolve_file_path 在当前工作目录找不到文件时，是如何通过向上回溯防止 CWD 目录偏移的？"
+expected_files:
+  - "src/code_agent/core/citation.py"
+expected_symbols:
+  - "_resolve_file_path"
+  - "parents[3]"
+is_unanswerable: false
+intent: "考察对路径回退寻址机制（防御运行目录漂移）的理解"
+source: "real"
+note: "W2 S2 路径自愈机制，防止在子目录运行时路径失效"

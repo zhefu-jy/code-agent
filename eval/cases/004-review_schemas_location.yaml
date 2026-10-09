@@ -1,0 +1,12 @@
+id: "004"
+type: "location"
+question: "用于结构化代码评审的数据模型 ReviewReport 和 ReviewIssue 定义在何处？"
+expected_files:
+  - "src/code_agent/core/schemas.py"
+expected_symbols:
+  - "ReviewReport"
+  - "ReviewIssue"
+is_unanswerable: false
+intent: "考察对 Pydantic 数据契约模型的精准定位能力"
+source: "real"
+note: "W1 S2 核心交付物，定义结构化审查契约"

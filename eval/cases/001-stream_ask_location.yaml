@@ -1,0 +1,11 @@
+id: "001"
+type: "location"
+question: "项目中的 stream_ask 流式生成器函数是在哪个文件、哪几行定义的？"
+expected_files:
+  - "src/code_agent/core/model.py"
+expected_symbols:
+  - "stream_ask"
+is_unanswerable: false
+intent: "考察模型对核心流式交互生成器函数的物理文件与行号定位能力"
+source: "real"
+note: "W1 核心交付函数，验证 BM25 检索召回与定义行号定位"

@@ -1,0 +1,9 @@
+id: "009"
+type: "boundary"
+question: "项目中用于实现分布式锁的 RedisDistributedLocker 在哪个文件第几行？"
+expected_files: []
+expected_symbols: []
+is_unanswerable: true
+intent: "钓鱼测试：完全虚构的模块，测试模型能否遵循铁律明确输出“无依据”，严禁编造"
+source: "constructed"
+note: "W2 S2 实验钓鱼用例，检验铁律 prompt 的拒答机制"

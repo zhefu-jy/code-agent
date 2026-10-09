@@ -1,0 +1,9 @@
+id: "010"
+type: "boundary"
+question: "在 src/code_agent/core/model.py 中用于将模型导出为 ONNX 格式的 export_to_onnx 函数在第几行？"
+expected_files: []
+expected_symbols: []
+is_unanswerable: true
+intent: "诱导测试：在真实存在的文件中询问不存在的函数，测试模型是否会发生常识偷渡或编造假行号"
+source: "constructed"
+note: "W2 S2 诱导钓鱼用例，检验模型是否能在已有真实代码中拒答虚构函数"

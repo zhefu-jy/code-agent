@@ -1,0 +1,11 @@
+id: "002"
+type: "location"
+question: "引用有效性物理校验函数 validate_citation 是在哪个文件中实现的？"
+expected_files:
+  - "src/code_agent/core/citation.py"
+expected_symbols:
+  - "validate_citation"
+is_unanswerable: false
+intent: "考察对核心引用物理校验函数所在文件的精准定位"
+source: "real"
+note: "W2 S2 核心交付物，验证对引用模块物理路径的召回"

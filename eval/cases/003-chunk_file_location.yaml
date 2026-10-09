@@ -1,0 +1,11 @@
+id: "003"
+type: "location"
+question: "代码切块函数 chunk_file 的滑动窗口切块逻辑位于哪个文件？"
+expected_files:
+  - "src/code_agent/index/bm25_index.py"
+expected_symbols:
+  - "chunk_file"
+is_unanswerable: false
+intent: "考察对 BM25 索引模块中文档切块实现的物理定位能力"
+source: "real"
+note: "W1 周末索引模块核心函数，包含 chunk_size 与 overlap 滑动切块"
