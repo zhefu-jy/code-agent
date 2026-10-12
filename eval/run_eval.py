@@ -162,13 +162,15 @@ def evaluate_single_case(
         file_hit = True  # 未指定期望文件时默认不扣分
 
     if case.expected_symbols:
-        # 检查回答文本中是否命中了关键符号
-        for exp_sym in case.expected_symbols:
-            if exp_sym.lower() in answer.lower():
-                symbol_hit = True
-                break
-    else:
-        symbol_hit = True
+      missing_symbols = [
+          sym for sym in case.expected_symbols
+          if sym.lower() not in answer.lower()
+      ]
+      if missing_symbols:
+          symbol_hit = False
+          fail_reasons.append(f"未命中期望关键符号: {missing_symbols}")
+      else:
+          symbol_hit = True
 
     # 5. 综合通关判决（Pass / Fail）
     is_passed = False
@@ -182,6 +184,8 @@ def evaluate_single_case(
         # 正常题判卷标准：
         if not is_completed:
             fail_reasons.append("回答未完成或报错")
+        elif no_evidence_declared and case.id != "019":
+            fail_reasons.append("真实功能被模型判定为“无依据”（检索未召回关键代码片段）")
         elif citations_count == 0:
             fail_reasons.append("未标注任何引用出处")
         elif valid_citations_count == 0:

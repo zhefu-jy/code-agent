@@ -1,0 +1,11 @@
+id: "016"
+type: "behavior"
+question: "在 chunk_file 切块函数中，如果读取文件发生异常（如编码错误或权限问题），函数会如何处理？"
+expected_files:
+  - "src/code_agent/index/bm25_index.py"
+expected_symbols:
+  - "chunk_file"
+is_unanswerable: false
+intent: "考察模型对单文件切块异常捕获与空列表回退机制的理解"
+source: "real"
+note: "W1 周末 BM25 文件健壮性"

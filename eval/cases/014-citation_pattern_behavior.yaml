@@ -1,0 +1,11 @@
+id: "014"
+type: "behavior"
+question: "正则表达式 _CITATION_PATTERN 是如何同时兼容单行引用 [file:line] 与区间引用 [file:start-end] 的？"
+expected_files:
+  - "src/code_agent/core/citation.py"
+expected_symbols:
+  - "_CITATION_PATTERN"
+is_unanswerable: false
+intent: "考察模型对引用提取正则设计中非捕获可选组匹配区间的理解"
+source: "real"
+note: "W2 S1 正则设计核心"

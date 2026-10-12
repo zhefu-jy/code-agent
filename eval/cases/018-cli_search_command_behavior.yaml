@@ -1,0 +1,12 @@
+id: "018"
+type: "behavior"
+question: "在命令行交互 CLI 中，当用户输入以 /search 开头的命令时，程序是如何解析关键词并打印前 3 个相关代码块的？"
+expected_files:
+  - "src/code_agent/cli.py"
+expected_symbols:
+  - "/search"
+  - "search"
+is_unanswerable: false
+intent: "考察模型对交互式命令行关键词检索分支逻辑的理解"
+source: "real"
+note: "W1 周末 CLI 命令分支"

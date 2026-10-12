@@ -1,0 +1,11 @@
+id: "013"
+type: "location"
+question: "用于表示引用物理校验结果的数据契约 CitationValidationResult 是在哪个文件中定义的？"
+expected_files:
+  - "src/code_agent/core/citation.py"
+expected_symbols:
+  - "CitationValidationResult"
+is_unanswerable: false
+intent: "考察模型对引用校验结果数据结构的物理定位能力"
+source: "real"
+note: "W2 S2 校验契约"

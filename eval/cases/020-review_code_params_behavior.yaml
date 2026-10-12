@@ -1,0 +1,12 @@
+id: "020"
+type: "behavior"
+question: "review_code 结构化评审函数在调用底层模型时，默认强制设定的 temperature 温度值是多少？"
+expected_files:
+  - "src/code_agent/core/model.py"
+expected_symbols:
+  - "review_code"
+  - "temperature=0.0"
+is_unanswerable: false
+intent: "考察模型对结构化输出确定性温度设定的理解"
+source: "real"
+note: "W1 S2 结构化调用参数"

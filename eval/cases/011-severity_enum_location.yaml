@@ -1,0 +1,14 @@
+id: "011"
+type: "location"
+question: "项目中的严重度枚举 Severity 是在哪个文件定义的，包含哪几个级别？"
+expected_files:
+  - "src/code_agent/core/schemas.py"
+expected_symbols:
+  - "Severity"
+  - "FATAL"
+  - "WARNING"
+  - "INFO"
+is_unanswerable: false
+intent: "考察模型对核心审查结果严重度枚举的定位与取值理解"
+source: "real"
+note: "W1 S2 数据契约模块"

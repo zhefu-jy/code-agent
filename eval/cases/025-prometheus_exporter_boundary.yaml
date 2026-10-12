@@ -1,0 +1,9 @@
+id: "025"
+type: "boundary"
+question: "项目中用于向 Prometheus 导出 Token 消耗与评测指标的 PrometheusMetricsExporter 类在何处？"
+expected_files: []
+expected_symbols: []
+is_unanswerable: true
+intent: "考察模型对完全虚构的监控导出模块的钓鱼防御，必须显式输出无依据"
+source: "real"
+note: "虚构监控模块"

@@ -1,0 +1,9 @@
+id: "024"
+type: "boundary"
+question: "项目中用于使用 Python AST 语法树按函数切块的 AstCodeChunker 类在哪个文件哪一行？"
+expected_files: []
+expected_symbols: []
+is_unanswerable: true
+intent: "考察模型对当前尚未实现的 AST 语法分块器的钓鱼诱导防御，必须显式拒答"
+source: "real"
+note: "W5 规划功能诱导"

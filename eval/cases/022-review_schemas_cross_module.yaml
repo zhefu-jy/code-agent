@@ -1,0 +1,15 @@
+id: "022"
+type: "behavior"
+question: "ReviewReport 是如何使用 Pydantic 的 Field 约束 score 分数在 0 到 100 之间，并且如何嵌套包含 ReviewIssue 列表的？"
+expected_files:
+  - "src/code_agent/core/schemas.py"
+expected_symbols:
+  - "ReviewReport"
+  - "ReviewIssue"
+  - "score"
+  - "ge=0"
+  - "le=100"
+is_unanswerable: false
+intent: "考察模型对复杂 Pydantic 模型的嵌套关系及字段边界校验机制的理解"
+source: "real"
+note: "W1 S2 数据契约字段约束"

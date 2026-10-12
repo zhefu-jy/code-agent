@@ -1,0 +1,13 @@
+id: "015"
+type: "behavior"
+question: "当大模型输出的引用行号出现起止倒置（如起始行号大于结束行号）时，extract_citations 是如何自动纠错的？"
+expected_files:
+  - "src/code_agent/core/citation.py"
+expected_symbols:
+  - "extract_citations"
+  - "start_line"
+  - "end_line"
+is_unanswerable: false
+intent: "考察模型对提取出处时起止行倒置检测与交换容错逻辑的理解"
+source: "real"
+note: "W2 S1 容错机制"

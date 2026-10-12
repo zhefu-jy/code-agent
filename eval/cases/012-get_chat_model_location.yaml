@@ -1,0 +1,12 @@
+id: "012"
+type: "location"
+question: "模型工厂函数 get_chat_model 是在哪个文件中实现的，其默认使用的模型名称是什么？"
+expected_files:
+  - "src/code_agent/core/model.py"
+expected_symbols:
+  - "get_chat_model"
+  - "deepseek-flash"
+is_unanswerable: false
+intent: "考察模型对 LLM 工厂函数位置及默认模型配置的定位能力"
+source: "real"
+note: "W1 S1 模型初始化封装"

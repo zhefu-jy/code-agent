@@ -1,0 +1,12 @@
+id: "019"
+type: "behavior"
+question: "has_no_evidence 判定函数是通过检查哪些特定关键词来识别模型是否显式输出了“无依据”的？"
+expected_files:
+  - "src/code_agent/core/citation.py"
+expected_symbols:
+  - "has_no_evidence"
+  - "无依据"
+is_unanswerable: false
+intent: "考察模型对边界拒答判定函数关键词匹配规则的理解"
+source: "real"
+note: "W2 S1 拒答判定函数"

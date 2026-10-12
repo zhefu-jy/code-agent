@@ -1,0 +1,13 @@
+id: "021"
+type: "behavior"
+question: "cli.py 中的交互式会话是如何维护历史消息列表 messages，并将其传递给 model.py 中的 stream_ask 实现多轮对话的？"
+expected_files:
+  - "src/code_agent/cli.py"
+  - "src/code_agent/core/model.py"
+expected_symbols:
+  - "messages"
+  - "stream_ask"
+is_unanswerable: false
+intent: "考察跨模块多轮对话状态维护与流式生成调用的协作流程"
+source: "real"
+note: "W1 S1 跨模块会话机制"

@@ -1,0 +1,12 @@
+id: "017"
+type: "behavior"
+question: "BM25CodeIndex.build_from_directory 在递归扫描目录构建索引时，默认排除了哪些目录？"
+expected_files:
+  - "src/code_agent/index/bm25_index.py"
+expected_symbols:
+  - "ignore_dirs"
+  - "build_from_directory"
+is_unanswerable: false
+intent: "考察模型对工程索引扫描黑名单配置（如 .git, __pycache__ 等）的理解"
+source: "real"
+note: "W1 周末 BM25 目录治理"

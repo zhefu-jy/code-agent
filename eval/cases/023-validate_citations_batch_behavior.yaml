@@ -1,0 +1,12 @@
+id: "023"
+type: "behavior"
+question: "validate_citations 批量校验函数是如何通过列表推导式复用单条校验函数 validate_citation 的？"
+expected_files:
+  - "src/code_agent/core/citation.py"
+expected_symbols:
+  - "validate_citations"
+  - "validate_citation"
+is_unanswerable: false
+intent: "考察批量引用校验接口对单条校验逻辑的委托与透传机制"
+source: "real"
+note: "W2 S2 批量接口契约"
