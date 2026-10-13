@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from dataclasses import dataclass, field
 import yaml
+import argparse
 
 # 1. Windows 控制台防乱码与 emoji 保护
 if sys.platform == "win32":
@@ -53,9 +54,13 @@ class CaseResult:
     has_no_evidence_declared: bool  # 是否声明了无依据
     citations_count: int  # 提取到的引用总数
     valid_citations_count: int  # 经物理文件校验合法的引用数
+    retrieval_file_hit: bool #检索阶段：BM25 Top-K 切块中是否召回了期望文件
     file_hit: bool  # 是否精准命中了期望文件
     symbol_hit: bool  # 是否精准命中了关键符号
-    is_passed: bool  # 综合判定是否通关
+    prompt_tokens: int = 0 #输入提示词token
+    completion_tokens: int = 0 #模型输出 token
+    total_tokens: int = 0 #总消耗token
+    is_passed: bool = False # 综合判定是否通关
     fail_reason: str = ""  # 失败原因归因
 
 
@@ -98,6 +103,21 @@ def evaluate_single_case(
     # 1. BM25 检索相关代码片段
     results = indexer.search(case.question, top_k=top_k)
     snippets_text = ""
+
+    # 判定检索阶段是否成功召回了期望文件（Stage 1: 检索召回判断）
+    retrieval_file_hit = False
+
+    # 如果本身就没有期望文件，则默认召回成功
+    if not case.expected_files:
+        retrieval_file_hit = True
+    elif results:
+        retrieved_paths =[Path(chunk.file_path).as_posix().lower() for chunk, _ in results]
+        for exp_f in case.expected_files:
+            clean_exp = Path(exp_f).as_posix().lower()
+            if any(clean_exp in rp or rp.endswith(clean_exp) for rp in retrieved_paths):
+                retrieval_file_hit = True
+                break
+
     if results:
         for i, (chunk, score) in enumerate(results, 1):
             # 方案 A 数据源治理：将物理绝对路径转为相对于工程根目录的标准相对路径（消除 Windows 盘符冒号）
@@ -132,6 +152,14 @@ def evaluate_single_case(
         ])
         answer = response.content
         is_completed = bool(answer and answer.strip())
+
+        #安全提取 Token 消耗元数据
+        usage = getattr(response,"usage_metadata",{}) or {}
+        if not usage and hasattr(response,"response_metadata"):
+            usage = response.response_metadata.get("token_usage", {}) or {}
+        prompt_tokens = usage.get("input_tokens", 0)
+        completion_tokens = usage.get("output_tokens", 0)
+        total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
     except Exception as e:
         answer = f"调用模型异常: {e}"
         is_completed = False
@@ -205,14 +233,107 @@ def evaluate_single_case(
         has_no_evidence_declared=no_evidence_declared,
         citations_count=citations_count,
         valid_citations_count=valid_citations_count,
+        retrieval_file_hit=retrieval_file_hit,
         file_hit=file_hit,
         symbol_hit=symbol_hit,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
         is_passed=is_passed,
         fail_reason="; ".join(fail_reasons),
+
     )
 
+def generate_markdown_report(
+        results: list[CaseResult],
+        report_file: Path | None = None,
+        top_k : int = 3,
+)->None:
+    """生成结构清晰的 Markdown 评测报告 (包含大盘指标、失败归因与全量清单)"""
+    total = len(results)
+    if total == 0:
+        return
 
-def run_eval(cases_dir: Path, output_file: Path | None = None) -> None:
+    passed_count = sum(1 for r in results if r.is_passed)
+    completed_count = sum(1 for r in results if r.is_completed)
+    total_citations = sum(r.citations_count for r in results)
+    valid_citations = sum(r.valid_citations_count for r in results)
+    retrieval_hits = sum(1 for r in results if r.retrieval_file_hit)
+    boundary_cases = [r for r in results if r.case.is_unanswerable]
+    boundary_passed = sum(1 for r in boundary_cases if r.is_passed)
+
+    pass_rate = (passed_count / total * 100)
+    completion_rate = (completed_count / total * 100)
+    retrieval_recall = (retrieval_hits / total * 100)
+    citation_valid_rate = (valid_citations / total_citations * 100) if total_citations else 0.0
+    boundary_rate = (boundary_passed / len(boundary_cases) * 100) if boundary_cases else 0.0
+    avg_latency = sum(r.latency for r in results) / total
+    total_tokens = sum(r.total_tokens for r in results)
+    avg_tokens = total_tokens / total
+
+    # 格式化当前时间
+    cur_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    lines = []
+    lines.append("# Code-Agent 自动化评测报告 (Benchmark Report)")
+    lines.append(f"\n> **评测时间**：{cur_time} ｜ **检索参数**：BM25 (Top-K={top_k}) ｜ **模型**：DeepSeek (temp=0.0)\n")
+    # 一、大盘看板
+    lines.append("## 一、评测大盘总结 (Summary Dashboard)")
+    lines.append("")
+    lines.append("| 核心指标 | 实测数值 | 达标判定 / 说明 |")
+    lines.append("| :--- | :--- | :--- |")
+    lines.append(f"| **综合通关率** | **{pass_rate:.1f}%** ({passed_count}/{total}) | 端到端各环节严格通过占比 |")
+    lines.append(
+        f"| **检索阶段召回率 (Stage 1)** | **{retrieval_recall:.1f}%** ({retrieval_hits}/{total}) | BM25 Top-K 命中期望目标文件比率 |")
+    lines.append(
+        f"| **模型回答完成率** | **{completion_rate:.1f}%** ({completed_count}/{total}) | 模型未报错且有实质性回答 |")
+    lines.append(
+        f"| **引用物理有效率** | **{citation_valid_rate:.1f}%** ({valid_citations}/{total_citations}) | 引用行号与文件真实存在比率 |")
+    lines.append(
+        f"| **虚构边界防御率** | **{boundary_rate:.1f}%** ({boundary_passed}/{len(boundary_cases)}) | 面对不存在功能严谨拒答比率 |")
+    lines.append(f"| **平均单题耗时** | **{avg_latency:.2f}s** | 检索 + 推理端到端延迟 |")
+    lines.append(f"| **总消耗 Token** | **{total_tokens:,} tok** | 本次评测累计 Token 消耗 |")
+    lines.append(f"| **单题平均 Token** | **{avg_tokens:.0f} tok** | 提示词与回答平均成本 |")
+    lines.append("")
+
+    # 二、未通过用例归因明细
+    failed_results = [r for r in results if not r.is_passed]
+    lines.append("## 二、未通关用例归因明细 (Failure Analysis)")
+    lines.append("")
+    if not failed_results:
+        lines.append("🎉 **全量通关！本次评测无任何失败用例。**\n")
+    else:
+        lines.append("| 用例 ID | 题型 | 检索是否召回 | 耗时 | 失败原因归因 |")
+        lines.append("| :--- | :--- | :---: | :--- | :--- |")
+        for r in failed_results:
+            ret_mark = "✅ 命中" if r.retrieval_file_hit else "❌ 丢失"
+            clean_reason = r.fail_reason.replace("\n", " ")
+            lines.append(f"| `{r.case.id}` | {r.case.type} | {ret_mark} | {r.latency:.2f}s | {clean_reason} |")
+        lines.append("")
+
+        # 三、全量用例明细表
+    lines.append("## 三、全量用例清单明细 (All Cases)")
+    lines.append("")
+    lines.append("| ID | 题型 | 判定 | 检索召回 | 引用数(有效/总) | 耗时 | Token |")
+    lines.append("| :--- | :--- | :---: | :---: | :---: | :---: | :---: |")
+    for r in results:
+        status_icon = "✅ PASS" if r.is_passed else "❌ FAIL"
+        ret_icon = "✅" if r.retrieval_file_hit else "❌"
+        cite_str = f"{r.valid_citations_count}/{r.citations_count}"
+        tok_str = f"{r.total_tokens:,}" if r.total_tokens else "-"
+        lines.append(
+            f"| `{r.case.id}` | {r.case.type} | {status_icon} | {ret_icon} | {cite_str} | {r.latency:.2f}s | {tok_str} |")
+    report_file.parent.mkdir(parents=True, exist_ok=True)
+    report_file.write_text("\n".join(lines), encoding="utf-8")
+    print(f"📄 Markdown 评测报告已生成至: {report_file}")
+
+
+
+def run_eval(cases_dir: Path,
+             output_file: Path | None = None,
+             report_file: Path | None = None,
+             case_filter: str | None = None,
+             top_k : int = 3,
+             ) -> None:
     """运行全量评测并输出基线报告"""
     print("=" * 70)
     print("🚀 开始执行 Code-Agent 黄金案例集自动化评测 (W2 S3 Baseline)")
@@ -231,14 +352,24 @@ def run_eval(cases_dir: Path, output_file: Path | None = None) -> None:
 
     # 3. 加载用例
     cases = load_cases(cases_dir)
-    print(f"📋 共加载 {len(cases)} 个评测用例\n")
+    if case_filter:
+        targer_ids = [cid.strip() for cid in case_filter.split(",") if cid.strip()]
+        # 兼容匹配：支持精准匹配 "005" 或前缀匹配 "005-line_out_of_bounds"
+        cases =[
+            c for c in cases
+            if any (c.id == tid or c.id.startswith(tid) for tid in targer_ids)
+        ]
+        if not cases:
+            print(f"⚠️ 未找到匹配的用例: '{case_filter}'，请检查用例 ID")
+            return
+    print(f"📋 本次共评测 {len(cases)} 个用例\n")
 
     results: list[CaseResult] = []
 
     # 4. 逐题运行
     for i, case in enumerate(cases, 1):
         print(f"[{i:02d}/{len(cases):02d}] 正在评测 [{case.type.upper()}] {case.id} ... ", end="", flush=True)
-        res = evaluate_single_case(case, indexer, model, top_k=3, base_dir=root_path)
+        res = evaluate_single_case(case, indexer, model, top_k=top_k, base_dir=root_path)
         results.append(res)
 
         status_tag = "✅ PASS" if res.is_passed else "❌ FAIL"
@@ -299,14 +430,33 @@ def run_eval(cases_dir: Path, output_file: Path | None = None) -> None:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(dump_data, f, ensure_ascii=False, indent=2)
         print(f"💾 基线数据已成功保存至: {output_file}")
+    if report_file:
+        generate_markdown_report(results, report_file, top_k=top_k)
+
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Code-Agent 自动化黄金测评套件")
+    parser.add_argument("--case", "-c", type=str, default=None, help="指定用例ID进行调试（如 -c 005 或 -c 001,005）")
+    parser.add_argument("--top-k", "-k", type=int, default=3, help="BM25 检索召回的切块数量（默认 3）")
+    parser.add_argument("--output", "-o", type=str, default=None, help="指定 JSON 报告输出路径")
+    parser.add_argument("--report", "-r", type=str, default=None, help="指定 Markdown 报告输出路径")
+    args = parser.parse_args()
+
     root_path = Path(__file__).resolve().parent.parent
     cases_dir = root_path / "eval" / "cases"
     runs_dir = root_path / "eval" / "runs"
-    output_file = runs_dir / "baseline_bm25.json"
-    run_eval(cases_dir, output_file=output_file)
+
+    output_file = Path(args.output) if args.output else (runs_dir / "baseline_bm25.json")
+    report_file = Path(args.report) if args.report else (runs_dir / "report-001.md")
+
+    run_eval(
+        cases_dir,
+        output_file=output_file,
+        report_file=report_file,
+        case_filter=args.case,
+        top_k=args.top_k
+    )
 
 
 if __name__ == "__main__":
