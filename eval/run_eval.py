@@ -63,6 +63,7 @@ class CaseResult:
     is_passed: bool = False # 综合判定是否通关
     fail_reason: str = ""  # 失败原因归因
     snippets_text: str = "" #实际喂给模型的 BM25 检索代码切片原文
+    full_prompt : str = "" #实际喂给大模型的完整组装 Prompt 原文
 
 
 def load_cases(cases_dir:Path) -> list[EvalCase]:
@@ -143,6 +144,10 @@ def evaluate_single_case(
         f"【参考代码片段】:\n{snippets_text}\n\n"
         f"【用户问题】: {case.question}\n"
         "请根据参考代码回答，并严格标注每一处出处引用。"
+    )
+    full_prompt = (
+        f"=== [System Message] ===\n{system_prompt}\n\n"
+        f"=== [User Message] ===\n{user_prompt}"
     )
 
     try:
@@ -242,7 +247,7 @@ def evaluate_single_case(
         is_passed=is_passed,
         fail_reason="; ".join(fail_reasons),
         snippets_text=snippets_text,
-
+        full_prompt=full_prompt,
     )
 
 def generate_markdown_report(
@@ -335,6 +340,7 @@ def run_eval(cases_dir: Path,
              case_filter: str | None = None,
              top_k : int = 3,
              verbose: bool = False, #控制是否详细打印切片
+             show_prompt: bool = False #控制是否打印完整Prompt
              ) -> None:
     """运行全量评测并输出基线报告"""
     print("=" * 70)
@@ -388,6 +394,13 @@ def run_eval(cases_dir: Path,
             else:
                 print("（⚠️ 未检索到任何相关代码切块）")
             print("-" * 70 + "\n")
+
+        if show_prompt:
+            print("\n" + "=" * 70)
+            print(f"📝 【完整输入 Prompt - Case {case.id}】")
+            print("=" * 70)
+            print(res.full_prompt.strip())
+            print("=" * 70 + "\n")
 
     # 5. 汇总核心指标
     total = len(results)
@@ -454,6 +467,7 @@ def main():
     parser.add_argument("--output", "-o", type=str, default=None, help="指定 JSON 报告输出路径")
     parser.add_argument("--report", "-r", type=str, default=None, help="指定 Markdown 报告输出路径")
     parser.add_argument("--verbose","-v", action="store_true", help="打印详细的检索代码切块 Trace")
+    parser.add_argument("--prompt", "-p", action="store_true", help="打印喂给大模型的完整 Prompt 原文")
     args = parser.parse_args()
 
     root_path = Path(__file__).resolve().parent.parent
@@ -469,7 +483,8 @@ def main():
         report_file=report_file,
         case_filter=args.case,
         top_k=args.top_k,
-        verbose=args.verbose
+        verbose=args.verbose,
+        show_prompt=args.prompt
     )
 
 
