@@ -62,7 +62,7 @@ class CaseResult:
     total_tokens: int = 0 #总消耗token
     is_passed: bool = False # 综合判定是否通关
     fail_reason: str = ""  # 失败原因归因
-
+    snippets_text: str = "" #实际喂给模型的 BM25 检索代码切片原文
 
 
 def load_cases(cases_dir:Path) -> list[EvalCase]:
@@ -241,6 +241,7 @@ def evaluate_single_case(
         total_tokens=total_tokens,
         is_passed=is_passed,
         fail_reason="; ".join(fail_reasons),
+        snippets_text=snippets_text,
 
     )
 
@@ -333,6 +334,7 @@ def run_eval(cases_dir: Path,
              report_file: Path | None = None,
              case_filter: str | None = None,
              top_k : int = 3,
+             verbose: bool = False, #控制是否详细打印切片
              ) -> None:
     """运行全量评测并输出基线报告"""
     print("=" * 70)
@@ -376,6 +378,16 @@ def run_eval(cases_dir: Path,
         print(f"{status_tag} ({res.latency:.2f}s)")
         if not res.is_passed:
             print(f"     🚨 失败原因: {res.fail_reason}")
+
+        if verbose:
+            print("\n" + "-" * 70)
+            print(f"🔍 【检索追溯 Trace - Case {case.id}】(Top-{top_k} 代码切块)")
+            print("-" * 70)
+            if res.snippets_text.strip():
+                print(res.snippets_text.strip())
+            else:
+                print("（⚠️ 未检索到任何相关代码切块）")
+            print("-" * 70 + "\n")
 
     # 5. 汇总核心指标
     total = len(results)
@@ -441,6 +453,7 @@ def main():
     parser.add_argument("--top-k", "-k", type=int, default=3, help="BM25 检索召回的切块数量（默认 3）")
     parser.add_argument("--output", "-o", type=str, default=None, help="指定 JSON 报告输出路径")
     parser.add_argument("--report", "-r", type=str, default=None, help="指定 Markdown 报告输出路径")
+    parser.add_argument("--verbose","-v", action="store_true", help="打印详细的检索代码切块 Trace")
     args = parser.parse_args()
 
     root_path = Path(__file__).resolve().parent.parent
@@ -455,7 +468,8 @@ def main():
         output_file=output_file,
         report_file=report_file,
         case_filter=args.case,
-        top_k=args.top_k
+        top_k=args.top_k,
+        verbose=args.verbose
     )
 
 
