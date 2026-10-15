@@ -23,7 +23,7 @@ def tokenize_code(text:str) ->list[str]:
     tokens = [w.lower() for w in words if len(w) > 1]  # 过滤单字符无意义符号
     return tokens
 
-def chunk_file(file_path:Path,chunk_size:int = 40,overlap: int = 10)->list[CodeChunk]:
+def chunk_file(file_path:Path,chunk_size:int = 60,overlap: int = 20)->list[CodeChunk]:
     """
     读取单个文件并按滑动窗口行数切分
     """
