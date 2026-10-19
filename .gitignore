@@ -11,10 +11,11 @@
 *.swp
 *.swo
 
-# Python 缓存
+# Python 缓存与包元数据
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
 .mypy_cache/
 .pytest_cache/
 

@@ -217,7 +217,9 @@ def evaluate_single_case(
         # 正常题判卷标准：
         if not is_completed:
             fail_reasons.append("回答未完成或报错")
-        elif no_evidence_declared and case.id != "019":
+        #优化：如果已经命中了期望文件和关键符号且有合法引用，不属于整体拒答
+        elif no_evidence_declared and case.id != "019" and not (file_hit and
+                                                                symbol_hit and valid_citations_count >= 1):
             fail_reasons.append("真实功能被模型判定为“无依据”（检索未召回关键代码片段）")
         elif citations_count == 0:
             fail_reasons.append("未标注任何引用出处")
@@ -340,7 +342,8 @@ def run_eval(cases_dir: Path,
              case_filter: str | None = None,
              top_k : int = 3,
              verbose: bool = False, #控制是否详细打印切片
-             show_prompt: bool = False #控制是否打印完整Prompt
+             show_prompt: bool = False, #控制是否打印完整Prompt
+             is_replay: bool = False
              ) -> None:
     """运行全量评测并输出基线报告"""
     print("=" * 70)
@@ -385,6 +388,35 @@ def run_eval(cases_dir: Path,
         if not res.is_passed:
             print(f"     🚨 失败原因: {res.fail_reason}")
 
+        #Replay 模式专享的白盒体检表与模型原始回答
+        if is_replay:
+            print("\n" + "🔍" * 35)
+            print(f"🎬 【Replay 深度诊断白盒透视 - Case {case.id}】")
+            print("🔍" * 35)
+            print(f"📌 [测试问题]: {case.question}")
+            print(f"🎯 [期望文件]: {case.expected_files}")
+            print(f"🎯 [期望符号]: {case.expected_symbols}")
+            print(f"🎯 [是否虚构题]: {case.is_unanswerable}")
+            print("-" * 70)
+            print("🤖 【模型原始完整回答】:")
+            print(res.answer.strip())
+            print("-" * 70)
+            print("📋 【判卷器 5 维白盒体检表】:")
+            print(f"  1. [检索召回 Stage 1]: {'✅ 召回期望文件' if res.retrieval_file_hit else '❌ 未召回期望文件'}")
+            print(
+                f"  2. [拒答信令检测]:     {'⚠️ 触发“无依据”声明' if res.has_no_evidence_declared else '✅ 未声明“无依据”'}")
+            print(f"  3. [引用出处有效性]:   提取 {res.citations_count} 处引用，物理有效 {res.valid_citations_count} 处")
+            print(
+                f"  4. [文件与符号命中]:   文件命中={'✅' if res.file_hit else '❌'}, 符号命中={'✅' if res.symbol_hit else '❌'}")
+            print(
+                f"  5. [Token 与耗时]:     输入 {res.prompt_tokens} tok, 输出 {res.completion_tokens} tok, 耗时 {res.latency:.2f}s")
+            print("-" * 70)
+            print(f"🏆 【最终判定】: {'✅ PASS' if res.is_passed else '❌ FAIL'}")
+            if not res.is_passed:
+                print(f"🚨 【裁决因果】: {res.fail_reason}")
+            print("🔍" * 35 + "\n")
+
+
         if verbose:
             print("\n" + "-" * 70)
             print(f"🔍 【检索追溯 Trace - Case {case.id}】(Top-{top_k} 代码切块)")
@@ -428,8 +460,8 @@ def run_eval(cases_dir: Path,
     print(f"  - 平均单题耗时:       {avg_latency:.2f}s")
     print("=" * 70)
 
-    # 6. 保存基线结果 JSON
-    if output_file:
+    # 6. 保存基线结果 JSON（仅在非重放调试且指定了 output_file 时保存）
+    if output_file and not is_replay:
         output_file.parent.mkdir(parents=True, exist_ok=True)
         dump_data = {
             "meta": {
@@ -463,16 +495,45 @@ def run_eval(cases_dir: Path,
 def main():
     parser = argparse.ArgumentParser(description="Code-Agent 自动化黄金测评套件")
     parser.add_argument("--case", "-c", type=str, default=None, help="指定用例ID进行调试（如 -c 005 或 -c 001,005）")
+    parser.add_argument("--replay", type=str, default=None, help="深度重放调试模式（如 --replay 022 或 --replay failed）")
     parser.add_argument("--top-k", "-k", type=int, default=3, help="BM25 检索召回的切块数量（默认 3）")
     parser.add_argument("--output", "-o", type=str, default=None, help="指定 JSON 报告输出路径")
     parser.add_argument("--report", "-r", type=str, default=None, help="指定 Markdown 报告输出路径")
     parser.add_argument("--verbose","-v", action="store_true", help="打印详细的检索代码切块 Trace")
     parser.add_argument("--prompt", "-p", action="store_true", help="打印喂给大模型的完整 Prompt 原文")
+
     args = parser.parse_args()
 
     root_path = Path(__file__).resolve().parent.parent
     cases_dir = root_path / "eval" / "cases"
     runs_dir = root_path / "eval" / "runs"
+
+    is_replay = bool(args.replay)
+    case_filter = args.case
+    verbose = args.verbose
+    show_prompt = args.prompt
+    # 当指定 --replay 时，自动接管调试参数
+    if is_replay:
+       verbose = True
+       show_prompt = True
+       if args.replay.lower() == "failed":
+       # 自动从上次 baseline_bm25.json 读取所有未通关的题号
+          baseline_file = runs_dir / "baseline_bm25.json"
+          if baseline_file.exists():
+              with open(baseline_file, "r", encoding="utf-8") as f:
+                  data = json.load(f)
+              failed_ids = [c["id"] for c in data.get("cases", []) if not c.get("is_passed")]
+              if not failed_ids:
+                  print("🎉 上次评测大盘没有任何失败案例，无需重放！")
+                  return
+              case_filter = ",".join(failed_ids)
+              print(f"🔄 自动抓取上次失败用例: {case_filter}")
+          else:
+              print("⚠️ 未找到历史基线 baseline_bm25.json，无法自动提取失败用例")
+              return
+       else:
+            case_filter = args.replay
+
 
     output_file = Path(args.output) if args.output else (runs_dir / "baseline_bm25.json")
     report_file = Path(args.report) if args.report else (runs_dir / "report-001.md")
@@ -481,10 +542,11 @@ def main():
         cases_dir,
         output_file=output_file,
         report_file=report_file,
-        case_filter=args.case,
+        case_filter=case_filter,
         top_k=args.top_k,
-        verbose=args.verbose,
-        show_prompt=args.prompt
+        verbose=verbose,
+        show_prompt=show_prompt,
+        is_replay=is_replay,
     )
 
 
