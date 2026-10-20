@@ -1,7 +1,6 @@
 from dataclasses import  dataclass
 from pathlib import  Path
 import re
-from turtledemo.penrose import start
 
 from rank_bm25 import BM25Okapi
 
@@ -59,7 +58,7 @@ def chunk_file(file_path:Path,chunk_size:int = 60,overlap: int = 20)->list[CodeC
     return chunks
 
 class BM25CodeIndex:
-    def __init__(self):
+    def __init__(self) -> None:
         self.chunks : list[CodeChunk] = []
         self.bm25 : BM25Okapi | None = None
 

@@ -1,0 +1,261 @@
+{
+  "meta": {
+    "total": 25,
+    "pass_rate": 100.0,
+    "citation_valid_rate": 100.0,
+    "avg_latency": 1.5517640781402589,
+    "timestamp": 1792502914.8993993
+  },
+  "cases": [
+    {
+      "id": "001",
+      "type": "location",
+      "question": "项目中的 stream_ask 流式生成器函数是在哪个文件、哪几行定义的？",
+      "is_passed": true,
+      "latency": 1.728175163269043,
+      "fail_reason": "",
+      "answer": "`stream_ask` 流式生成器函数定义在 `src/code_agent/core/model.py` 文件中，函数定义起始于第 25 行，其函数体（含流式迭代与日志输出）延续至第 47 行 [src/code_agent/core/model.py:25-47]。\n\n具体依据如下：\n- 函数签名 `def stream_ask(messages:list[BaseMessage],model:BaseChatModel | None = None) -> Iterator[str]:` 位于第 25 行 [src/code_agent/core/model.py:25]。\n- 函数内部通过 `for chunk in actual_model.stream(messages):` 进行流式迭代并 `yield` 内容，构成生成器主体 [src/code_agent/core/model.py:29-34]。\n- 函数末尾的耗时与 token 统计日志输出位于第 36-47 行 [src/code_agent/core/model.py:36-47]。\n\n此外，该函数在 `src/code_agent/cli.py` 中被导入并调用：导入语句为 `from code_agent.core.model import stream_ask` [src/code_agent/cli.py:9]，调用处为 `for piece in stream_ask(messages):` [src/code_agent/cli.py:57-59]。",
+      "total_tokens": 1893
+    },
+    {
+      "id": "002",
+      "type": "location",
+      "question": "引用有效性物理校验函数 validate_citation 是在哪个文件中实现的？",
+      "is_passed": true,
+      "latency": 1.357151985168457,
+      "fail_reason": "",
+      "answer": "引用有效性物理校验函数 `validate_citation` 是在 `src/code_agent/core/citation.py` 文件中实现的 [src/code_agent/core/citation.py:127-133]。\n\n具体依据如下：\n\n- 函数定义 `def validate_citation(citation:Citation, base_dir:Path|str|None=None) -> CitationValidationResult:` 出现在该文件中 [src/code_agent/core/citation.py:127-129]。\n- 该函数的文档字符串说明其职责为校验单个引用在物理磁盘上的真实性与行号边界 [src/code_agent/core/citation.py:130-135]。\n- 函数体内部依次执行寻址定位真实文件、检查文件物理存在性、读取文件并计算总行数、行号边界防御校验等逻辑 [src/code_agent/core/citation.py:136-196]。\n\n此外，同文件中的 `validate_citations` 是批量校验函数，它通过逐个调用 `validate_citation` 实现 [src/code_agent/core/citation.py:191-196]。",
+      "total_tokens": 1884
+    },
+    {
+      "id": "003",
+      "type": "location",
+      "question": "代码切块函数 chunk_file 的滑动窗口切块逻辑位于哪个文件？",
+      "is_passed": true,
+      "latency": 1.1478779315948486,
+      "fail_reason": "",
+      "answer": "代码切块函数 `chunk_file` 的滑动窗口切块逻辑位于 `src/code_agent/index/bm25_index.py` 文件中 [src/code_agent/index/bm25_index.py:24-58]。\n\n具体而言，该函数定义从第 24 行开始 [src/code_agent/index/bm25_index.py:24]，滑动窗口的核心逻辑包括：计算步长 `step = chunk_size - overlap` [src/code_agent/index/bm25_index.py:37]，通过 `while start < total_lines` 循环按窗口切分 [src/code_agent/index/bm25_index.py:38-39]，并在每次迭代后以 `start += step` 推进窗口 [src/code_agent/index/bm25_index.py:56]。",
+      "total_tokens": 1682
+    },
+    {
+      "id": "004",
+      "type": "location",
+      "question": "用于结构化代码评审的数据模型 ReviewReport 和 ReviewIssue 定义在何处？",
+      "is_passed": true,
+      "latency": 1.1516435146331787,
+      "fail_reason": "",
+      "answer": "`ReviewReport` 和 `ReviewIssue` 两个数据模型均定义在 `src/code_agent/core/schemas.py` 中。\n\n- `ReviewIssue` 类定义于 [src/code_agent/core/schemas.py:9-18]，包含 `file_path`、`line_number`、`severity`、`issue_type`、`message`、`suggestion` 六个字段 [src/code_agent/core/schemas.py:13-18]。\n- `ReviewReport` 类定义于 [src/code_agent/core/schemas.py:20-29]，包含 `summary`、`score`、`issues` 三个字段，其中 `issues` 为 `list[ReviewIssue]` 类型 [src/code_agent/core/schemas.py:24-29]。\n\n此外，`ReviewReport` 在 `src/code_agent/core/model.py` 中被导入使用 [src/code_agent/core/model.py:10]，并在 `review_code` 函数中作为结构化输出的目标类型 [src/code_agent/core/model.py:68-77]。",
+      "total_tokens": 1645
+    },
+    {
+      "id": "005",
+      "type": "behavior",
+      "question": "当引用结束行号超出物理文件的总行数时，validate_citation 函数会返回什么状态枚举以及怎样的错误提示？",
+      "is_passed": true,
+      "latency": 1.1356804370880127,
+      "fail_reason": "",
+      "answer": "当引用结束行号超出物理文件总行数时，`validate_citation` 函数会返回状态枚举 `CitationStatus.LINE_OUT_OF_BOUNDS`，并附带错误提示信息 `f\"引用行号超出文件总行数 (文件共 {total_lines} 行，引用到第 {citation.end_line} 行)\"` [src/code_agent/core/citation.py:176-182]。\n\n具体逻辑位于“防御 C：行号越过文件尾部”分支中：当 `citation.end_line > total_lines` 成立时，构造 `CitationValidationResult`，其中 `status=CitationStatus.LINE_OUT_OF_BOUNDS`，`total_lines=total_lines`，`error_message` 为上述格式化字符串 [src/code_agent/core/citation.py:176-182]。\n\n其中 `total_lines` 来自读取物理文件内容后 `content.splitlines()` 的行数统计 [src/code_agent/core/citation.py:155-156]。",
+      "total_tokens": 1883
+    },
+    {
+      "id": "006",
+      "type": "behavior",
+      "question": "tokenize_code 分词函数是如何处理驼峰命名（如 OrderTimeout）和下划线命名的？",
+      "is_passed": true,
+      "latency": 2.0902183055877686,
+      "fail_reason": "",
+      "answer": "`tokenize_code` 对驼峰和下划线的处理方式如下：\n\n**1. 驼峰拆分：** 函数先用正则 `re.sub(r'([a-z])([A-Z])', r'\\1 \\2', text)` 在小写字母与大写字母的交界处插入空格，从而把驼峰命名拆开 [src/code_agent/index/bm25_index.py:19]。例如 `OrderTimeout` 中 `r` 与 `T`、`r` 与 `T` 的交界会被插入空格，变成 `Order Timeout` 形式。\n\n**2. 下划线处理：** 代码中没有专门针对下划线的替换逻辑；下划线本身不属于 `[a-zA-Z0-9]+` 的匹配范围，因此在后续 `re.findall(r'[a-zA-Z0-9]+', spaced_camel)` 提取单词时，下划线会作为分隔符被自然丢弃，从而把下划线命名拆成多个单词 [src/code_agent/index/bm25_index.py:20]。\n\n**3. 统一小写与过滤：** 提取出的单词通过 `w.lower()` 全部转为小写，并过滤掉长度不大于 1 的单字符 token [src/code_agent/index/bm25_index.py:21]。\n\n综上，驼峰靠显式正则插入空格拆分 [src/code_agent/index/bm25_index.py:19]，下划线靠 `findall` 的字符类不包含下划线而被动分隔 [src/code_agent/index/bm25_index.py:20]，两者最终都经过小写化和单字符过滤 [src/code_agent/index/bm25_index.py:21]。",
+      "total_tokens": 2058
+    },
+    {
+      "id": "007",
+      "type": "behavior",
+      "question": "_resolve_file_path 在当前工作目录找不到文件时，是如何通过向上回溯防止 CWD 目录偏移的？",
+      "is_passed": true,
+      "latency": 1.4785103797912598,
+      "fail_reason": "",
+      "answer": "当 `_resolve_file_path` 在当前工作目录找不到文件时，其向上回溯机制如下：\n\n1. 首先在未指定 `base_dir` 的情况下，优先尝试当前工作目录：构造 `candidate = (Path.cwd() / path).resolve()`，若该候选路径存在则直接返回 [src/code_agent/core/citation.py:113-115]。\n\n2. 若当前工作目录下不存在，则进入回退机制：通过 `repo_root = Path(__file__).resolve().parents[3]` 从当前模块文件位置向上回溯三级父目录，定位到仓库根目录 [src/code_agent/core/citation.py:117-118]。\n\n3. 然后以该仓库根目录为基准拼接目标路径，得到 `repo_candidate = (repo_root / path).resolve()`，若该候选路径存在则返回它 [src/code_agent/core/citation.py:119-121]。\n\n4. 若仓库根目录下仍不存在，则最终返回先前基于 CWD 的 `candidate` [src/code_agent/core/citation.py:122]。\n\n这一机制正是为了应对“运行目录发生偏移（如在 tests 目录下运行）”的场景，通过基于 `__file__` 的固定回溯而非依赖 CWD 来重新锚定仓库根目录 [src/code_agent/core/citation.py:116-117]。",
+      "total_tokens": 1935
+    },
+    {
+      "id": "008",
+      "type": "behavior",
+      "question": "review_code 函数是如何利用 LangChain 的结构化输出机制强制模型返回指定 Pydantic 模型的？",
+      "is_passed": true,
+      "latency": 2.416019916534424,
+      "fail_reason": "",
+      "answer": "`review_code` 函数通过 `with_structured_output` 把目标 Pydantic 模型绑定到聊天模型上，从而强制模型返回指定结构。具体机制如下：\n\n1. **确定实际使用的模型**：若调用方传入 `model` 则使用它，否则调用 `get_chat_model(temperature=0.0)` 获取默认模型 [src/code_agent/core/model.py:66]。\n\n2. **绑定结构化输出**：调用 `actual_model.with_structured_output(ReviewReport)`，把 `ReviewReport` 这个 Pydantic 模型作为结构化输出目标，得到 `structured_llm` [src/code_agent/core/model.py:67]。这一步是 LangChain 结构化输出机制的核心，即让模型按 `ReviewReport` 的 schema 生成结果。\n\n3. **构造消息并调用**：组装 `SystemMessage`（代码审查助手角色）和 `HumanMessage`（包含文件路径与代码内容），然后调用 `structured_llm.invoke(messages)` 得到 `report` [src/code_agent/core/model.py:68-72]。\n\n4. **结果类型兜底**：若 `report` 已是 `ReviewReport` 实例则直接返回；否则用 `ReviewReport.model_validate(report)` 将其校验/转换为 `ReviewReport` [src/code_agent/core/model.py:73-75]。\n\n关于 `ReviewReport` 本身的结构约束（`summary`、`score` 限定 0~100、`issues` 为 `ReviewIssue` 列表），由 Pydantic 模型定义提供 [src/code_agent/core/schemas.py:22-30]；其中 `ReviewIssue` 的字段（如 `severity` 强制匹配 `Severity` 枚举）也由模型定义约束 [src/code_agent/core/schemas.py:9-19]。\n\n需要说明的是：`with_structured_output` 内部具体如何把 Pydantic schema 转换为模型调用参数（如 function calling / JSON schema 等），在所提供的代码片段中**无依据**，无法进一步说明其底层实现细节。",
+      "total_tokens": 1937
+    },
+    {
+      "id": "009",
+      "type": "boundary",
+      "question": "项目中用于实现分布式锁的 RedisDistributedLocker 在哪个文件第几行？",
+      "is_passed": true,
+      "latency": 1.0365760326385498,
+      "fail_reason": "",
+      "answer": "无依据。\n\n提供的参考代码片段为空，其中不包含任何文件路径、代码行或 `RedisDistributedLocker` 的实现，因此无法确定该类的所在文件及行号。",
+      "total_tokens": 253
+    },
+    {
+      "id": "010",
+      "type": "boundary",
+      "question": "在 src/code_agent/core/model.py 中用于将模型导出为 ONNX 格式的 export_to_onnx 函数在第几行？",
+      "is_passed": true,
+      "latency": 1.5327048301696777,
+      "fail_reason": "",
+      "answer": "无依据。\n\n提供的三个参考代码片段中均不包含 `src/code_agent/core/model.py` 的文件内容，因此无法确认其中是否存在 `export_to_onnx` 函数，更无法给出其行号。具体而言：\n\n- 片段 1 仅包含 `src/code_agent/core/citation.py` 的引用数据结构、正则与校验状态定义 [src/code_agent/core/citation.py:1-60]；\n- 片段 2 仅包含 `src/code_agent/cli.py` 的启动与交互逻辑，其中只是从 `code_agent.core.model` 导入了 `stream_ask`，并未展示该模块内部实现 [src/code_agent/cli.py:1-60]；\n- 片段 3 仅包含 `src/code_agent/core/context.py` 的路径转换与上下文拼接函数 [src/code_agent/core/context.py:1-27]。\n\n因此，关于 `export_to_onnx` 函数的位置，无依据。",
+      "total_tokens": 2114
+    },
+    {
+      "id": "011",
+      "type": "location",
+      "question": "项目中的严重度枚举 Severity 是在哪个文件定义的，包含哪几个级别？",
+      "is_passed": true,
+      "latency": 0.7348747253417969,
+      "fail_reason": "",
+      "answer": "Severity 枚举定义在 `src/code_agent/core/schemas.py` 文件中，通过 `class Severity(str, Enum)` 声明 [src/code_agent/core/schemas.py:4-7]。\n\n该枚举包含三个级别：\n- `FATAL = \"fatal\"` [src/code_agent/core/schemas.py:5]\n- `WARNING = \"warning\"` [src/code_agent/core/schemas.py:6]\n- `INFO = \"info\"` [src/code_agent/core/schemas.py:7]",
+      "total_tokens": 613
+    },
+    {
+      "id": "012",
+      "type": "location",
+      "question": "模型工厂函数 get_chat_model 是在哪个文件中实现的，其默认使用的模型名称是什么？",
+      "is_passed": true,
+      "latency": 0.990649938583374,
+      "fail_reason": "",
+      "answer": "模型工厂函数 `get_chat_model` 实现在 `src/code_agent/core/model.py` 文件中 [src/code_agent/core/model.py:50]。其默认使用的模型名称是 `\"deepseek-flash\"`，由函数签名中的 `model_name: str = \"deepseek-flash\"` 指定 [src/code_agent/core/model.py:50]。",
+      "total_tokens": 1491
+    },
+    {
+      "id": "013",
+      "type": "location",
+      "question": "用于表示引用物理校验结果的数据契约 CitationValidationResult 是在哪个文件中定义的？",
+      "is_passed": true,
+      "latency": 1.1216907501220703,
+      "fail_reason": "",
+      "answer": "`CitationValidationResult` 定义在 `src/code_agent/core/citation.py` 文件中，是一个使用 `@dataclass` 装饰的数据类，用于承载引用校验的判决结果。[src/code_agent/core/citation.py:50-56]\n\n该类包含四个字段：原始引用对象 `citation`、判决状态 `status`、物理文件实际总行数 `total_lines`（默认 `None`）以及失败诊断信息 `error_message`（默认空字符串）。[src/code_agent/core/citation.py:51-55]\n\n此外，该类还提供了一个 `is_valid` 属性，用于快捷判断校验是否通过（即 `status == CitationStatus.VALID`）。[src/code_agent/core/citation.py:58-61]",
+      "total_tokens": 2032
+    },
+    {
+      "id": "014",
+      "type": "behavior",
+      "question": "正则表达式 _CITATION_PATTERN 是如何同时兼容单行引用 [file:line] 与区间引用 [file:start-end] 的？",
+      "is_passed": true,
+      "latency": 1.8954637050628662,
+      "fail_reason": "",
+      "answer": "`_CITATION_PATTERN` 通过“结束行号部分整体可选”的方式同时兼容单行与区间两种引用格式。具体机制如下：\n\n1. **起始行号必选、结束行号可选**：正则中 `(\\d+)` 捕获起始行号，紧随其后的 `(?:\\s*-\\s*(\\d+))?` 是一个可选的非捕获组，内部才捕获结束行号；末尾的 `?` 使整个“连字符+结束行号”部分可以整体缺省，因此 `[file:line]` 与 `[file:start-end]` 都能匹配 [src/code_agent/core/citation.py:26-31]。\n\n2. **连字符两侧允许空白**：可选组内写作 `\\s*-\\s*`，使 `start-end`、`start - end` 等写法均可被识别 [src/code_agent/core/citation.py:30]。\n\n3. **提取阶段的单行容错**：在 `extract_citations` 中，若未捕获到结束行（`end_str is None`），则令 `end_line = start_line`，从而把单行引用规范化为区间引用 [src/code_agent/core/citation.py:73-75]。\n\n4. **区间顺序容错**：若解析后 `start_line > end_line`，则交换两者，保证区间方向合法 [src/code_agent/core/citation.py:77-78]。\n\n5. **路径与括号的兼容**：路径捕获组 `([a-zA-Z0-9_\\-\\./\\\\]+\\.[a-zA-Z0-9_\\-]+)` 要求含点号后缀，并允许反斜杠；首尾的 `` `? `` 与 `\\]` 前的 `` `? `` 使带反引号的写法也能匹配 [src/code_agent/core/citation.py:26-31]。",
+      "total_tokens": 2442
+    },
+    {
+      "id": "015",
+      "type": "behavior",
+      "question": "当大模型输出的引用行号出现起止倒置（如起始行号大于结束行号）时，extract_citations 是如何自动纠错的？",
+      "is_passed": true,
+      "latency": 1.8991351127624512,
+      "fail_reason": "",
+      "answer": "当大模型输出的引用行号出现起止倒置时，`extract_citations` 会在解析阶段自动交换起止行号，使其恢复为升序。具体过程如下：\n\n1. 解析阶段先分别取出起始行号和结束行号：起始行号由捕获组 2 直接转为整数，结束行号在捕获组 3 存在时转为整数，否则回退为起始行号（单行容错）[src/code_agent/core/citation.py:71-73]。\n\n2. 随后进行倒置纠错：若 `start_line > end_line`，则交换两者，使 `start_line` 成为较小值、`end_line` 成为较大值[src/code_agent/core/citation.py:75-76]。\n\n3. 纠错后以交换后的行号构造 `Citation` 对象并加入结果列表[src/code_agent/core/citation.py:78-85]。\n\n因此，经过 `extract_citations` 提取出的引用不会保留起止倒置状态，而是被自动规整为 `start_line <= end_line`[src/code_agent/core/citation.py:75-76]。\n\n补充说明：在后续的 `validate_citation` 校验逻辑中，仍保留了对“起始行号大于结束行号”的防御分支，会返回 `INVALID_RANGE` 状态[src/code_agent/core/citation.py:167-174]；但由于 `extract_citations` 已在提取阶段完成交换纠错[src/code_agent/core/citation.py:75-76]，正常经由该函数提取的引用不会触发这一分支。",
+      "total_tokens": 2217
+    },
+    {
+      "id": "016",
+      "type": "behavior",
+      "question": "在 chunk_file 切块函数中，如果读取文件发生异常（如编码错误或权限问题），函数会如何处理？",
+      "is_passed": true,
+      "latency": 1.1852402687072754,
+      "fail_reason": "",
+      "answer": "在 `chunk_file` 函数中，读取文件的操作被包裹在 `try/except` 块中：`try` 分支调用 `file_path.read_text(encoding=\"utf-8\", errors=\"ignore\")` 读取文件内容 [src/code_agent/index/bm25_index.py:27-30]。如果读取过程中发生异常（如编码错误或权限问题），`except Exception` 分支会直接 `return []`，即返回一个空列表，函数不再继续后续的切块逻辑 [src/code_agent/index/bm25_index.py:30-31]。\n\n因此，对于读取失败的文件，`chunk_file` 不会抛出异常，也不会产生任何 `CodeChunk`，而是静默返回空列表 [src/code_agent/index/bm25_index.py:30-31]。",
+      "total_tokens": 1698
+    },
+    {
+      "id": "017",
+      "type": "behavior",
+      "question": "BM25CodeIndex.build_from_directory 在递归扫描目录构建索引时，默认排除了哪些目录？",
+      "is_passed": true,
+      "latency": 1.3149611949920654,
+      "fail_reason": "",
+      "answer": "BM25CodeIndex.build_from_directory 在递归扫描目录构建索引时，默认排除的目录集合为 `{\".git\", \".idea\", \"__pycache__\", \".venv\", \"venv\", \".mypy_cache\"}`，即 .git、.idea、__pycache__、.venv、venv、.mypy_cache 这六个目录 [src/code_agent/index/bm25_index.py:66-67]。\n\n该排除逻辑通过遍历 `path.rglob(\"*\")` 得到的每个路径 `p`，判断其任意组成部分 `part` 是否落在上述 `ignore_dirs` 集合中，若命中则 `continue` 跳过 [src/code_agent/index/bm25_index.py:69-71]。",
+      "total_tokens": 2024
+    },
+    {
+      "id": "018",
+      "type": "behavior",
+      "question": "在命令行交互 CLI 中，当用户输入以 /search 开头的命令时，程序是如何解析关键词并打印前 3 个相关代码块的？",
+      "is_passed": true,
+      "latency": 2.5449867248535156,
+      "fail_reason": "",
+      "answer": "在 CLI 中，`/search` 命令的处理流程如下：\n\n**1. 命令拦截与关键词解析**\n\n主循环读取用户输入后，先判断是否以 `/search` 开头；若是，则用 `replace(\"/search\", \"\").strip()` 去掉命令前缀并去除首尾空白，得到关键词 `query` [src/code_agent/cli.py:33-35]。若 `query` 为空，则打印提示“请提供要搜索的关键词”并 `continue` 跳过本轮 [src/code_agent/cli.py:36-38]。\n\n**2. 调用检索并取前 3 个结果**\n\n程序调用 `indexer.search(query, top_k=3)` 获取结果 [src/code_agent/cli.py:40]。在 `search` 实现中，先对查询做 `tokenize_code` 分词，若索引或切块为空、或分词结果为空则返回空列表 [src/code_agent/index/bm25_index.py:85-92]；随后用 `self.bm25.get_scores(query_tokens)` 计算各切块得分 [src/code_agent/index/bm25_index.py:94]，再按得分降序排序并截取前 `top_k` 个 [src/code_agent/index/bm25_index.py:97]，最后过滤掉得分为 0 的项后返回 `(CodeChunk, score)` 列表 [src/code_agent/index/bm25_index.py:100]。\n\n**3. 打印结果**\n\n若结果为空，打印“未在代码库中找到与 '{query}' 相关的代码片段” [src/code_agent/cli.py:41-42]；否则先打印找到的片段数量 [src/code_agent/cli.py:44]，再用 `enumerate(results, 1)` 逐个输出：每条打印 `【TOP rank】得分: score | 文件: chunk.file_path (第 start_line~end_line 行)`，随后打印分隔线、`chunk.content` 代码内容及分隔线 [src/code_agent/cli.py:45-51]。处理完毕后 `continue` 回到主循环，不进入普通对话分支 [src/code_agent/cli.py:52]。\n\n**补充说明**：`top_k=3` 的默认值也定义在 `search` 签名中 [src/code_agent/index/bm25_index.py:84]，CLI 显式传入 3 与之对应 [src/code_agent/cli.py:40]。",
+      "total_tokens": 2415
+    },
+    {
+      "id": "019",
+      "type": "behavior",
+      "question": "has_no_evidence 判定函数是通过检查哪些特定关键词来识别模型是否显式输出了“无依据”的？",
+      "is_passed": true,
+      "latency": 1.0906870365142822,
+      "fail_reason": "",
+      "answer": "`has_no_evidence` 函数通过正则表达式 `_NO_EVIDENCE_PATTERN` 来匹配以下关键词/短语（不区分大小写，`re.IGNORECASE`）：\n\n1. `无依据` [src/code_agent/core/citation.py:90]\n2. `未找到.*依据`（即“未找到”与“依据”之间可含任意字符）[src/code_agent/core/citation.py:90]\n3. `没有找到.*依据` [src/code_agent/core/citation.py:90]\n4. `不存在.*依据` [src/code_agent/core/citation.py:90]\n5. `无法从.*代码中找到` [src/code_agent/core/citation.py:90]\n6. `代码库中未实现` [src/code_agent/core/citation.py:90]\n7. `未在代码中找到` [src/code_agent/core/citation.py:90]\n\n该函数实现为 `return bool(_NO_EVIDENCE_PATTERN.search(text))`，即只要文本中命中上述任一模式即判定为“无依据” [src/code_agent/core/citation.py:95-97]。",
+      "total_tokens": 1549
+    },
+    {
+      "id": "020",
+      "type": "behavior",
+      "question": "review_code 结构化评审函数在调用底层模型时，默认强制设定的 temperature 温度值是多少？",
+      "is_passed": true,
+      "latency": 1.3068535327911377,
+      "fail_reason": "",
+      "answer": "根据参考代码，`review_code` 函数在未传入 `model` 参数时，会调用 `get_chat_model(temperature=0.0)`，即默认强制设定的 temperature 温度值为 **0.0**。\n\n依据如下：\n\n- `review_code` 中通过 `actual_model = model if model is not None else get_chat_model(temperature=0.0)` 显式传入 `temperature=0.0` [src/code_agent/core/model.py:66]。\n- `get_chat_model` 的签名中 `temperature` 参数默认值本身也是 `0.0` [src/code_agent/core/model.py:52]，该值被传入 `ChatDeepSeek` 的 `temperature` 参数 [src/code_agent/core/model.py:54-55]。",
+      "total_tokens": 1583
+    },
+    {
+      "id": "021",
+      "type": "behavior",
+      "question": "cli.py 中的交互式会话是如何维护历史消息列表 messages，并将其传递给 model.py 中的 stream_ask 实现多轮对话的？",
+      "is_passed": true,
+      "latency": 3.713411331176758,
+      "fail_reason": "",
+      "answer": "在 `cli.py` 的 `main()` 中，历史消息列表 `messages` 在进入交互循环前被初始化为只包含一条系统消息，之后每轮用户输入都会追加到该列表，并整体传给 `stream_ask`，从而实现多轮对话。\n\n**1. 初始化历史消息列表**\n\n进入 `while True` 循环之前，`messages` 被初始化为一个只含系统提示的列表：[src/code_agent/cli.py:28]\n\n```python\nmessages: list[BaseMessage] = [SystemMessage(content=\"你是一个专业的代码工程助手，回答简洁专业。\")]\n```\n\n**2. 每轮把用户输入追加进 messages**\n\n在非 `/search` 命令的普通对话分支中，程序把用户输入包装成 `HumanMessage` 追加到 `messages` 末尾，然后调用 `stream_ask(messages)`：[src/code_agent/cli.py:52-56]\n\n```python\nmessages.append(HumanMessage(content=input_question))\nfull_answer = \"\"\nprint(\"Agent: \", end=\"\", flush=True)\nfor piece in stream_ask(messages):\n```\n\n由于 `messages` 是循环外定义的同一个列表对象，每轮追加的 `HumanMessage` 都会累积下来，因此下一次调用 `stream_ask` 时传入的是包含全部历史用户消息的列表：[src/code_agent/cli.py:28][src/code_agent/cli.py:52-56]\n\n**3. stream_ask 接收并消费该消息列表**\n\n`stream_ask` 的签名接收 `messages: list[BaseMessage]`，并把它直接传给模型的 `stream` 方法：[src/code_agent/core/model.py:24-30]\n\n```python\ndef stream_ask(messages:list[BaseMessage],model:BaseChatModel | None = None) -> Iterator[str]:\n    ...\n    actual_model =  model if model is not None else get_chat_model()\n    for chunk in actual_model.stream(messages):\n```\n\n**4. 关于 AI 回复是否回填到 messages**\n\n需要指出：`cli.py` 中虽然用 `full_answer` 累积了模型流式输出的内容：[src/code_agent/cli.py:53-57]\n\n```python\nfull_answer = \"\"\nprint(\"Agent: \", end=\"\", flush=True)\nfor piece in stream_ask(messages):\n    full_answer += piece\n    print(piece, end=\"\", flush=True)\n```\n\n但在所提供的代码片段范围内，**没有看到把 `full_answer` 作为 `AIMessage` 追加回 `messages` 的语句**。也就是说，依据现有片段，历史列表只累积了用户侧的 `HumanMessage`，模型回复并未显式回填。若后续代码（片段 2 第 60 行之后）存在回填逻辑，则不在本次提供的参考范围内，无法据此确认。\n\n**5. 补充：/search 分支不进入对话历史**\n\n`/search` 命令分支在检索完成后直接 `continue`，不会向 `messages` 追加任何消息，因此检索操作不影响对话历史：[src/code_agent/cli.py:37-50]\n\n```python\nif input_question.startswith(\"/search\"):\n    ...\n    continue\n```\n\n**小结**：多轮对话的维护方式是——循环外初始化含系统消息的 `messages` 列表 [src/code_agent/cli.py:28]，每轮把用户输入以 `HumanMessage` 追加进去 [src/code_agent/cli.py:52]，再把整个列表传给 `stream_ask` [src/code_agent/cli.py:56]，由后者直接交给模型 `stream` 消费 [src/code_agent/core/model.py:29-30]。至于 AI 回复是否回填进历史，在给定片段中无依据。",
+      "total_tokens": 2558
+    },
+    {
+      "id": "022",
+      "type": "behavior",
+      "question": "ReviewReport 是如何使用 Pydantic 的 Field 约束 score 分数在 0 到 100 之间，并且如何嵌套包含 ReviewIssue 列表的？",
+      "is_passed": true,
+      "latency": 1.8733651638031006,
+      "fail_reason": "",
+      "answer": "**score 的 0~100 约束**\n\n`ReviewReport` 中的 `score` 字段通过 Pydantic 的 `Field` 传入 `ge=0` 和 `le=100` 两个参数来限定取值范围，即大于等于 0、小于等于 100，同时用 `description` 说明其含义为“代码整体评分（0 到 100 分）”[src/code_agent/core/schemas.py:24-28]。\n\n**嵌套 ReviewIssue 列表**\n\n`ReviewReport` 的 `issues` 字段类型标注为 `list[ReviewIssue]`，并通过 `Field(description=\"所有具体问题的列表\")` 给出说明，从而把 `ReviewIssue` 模型以列表形式嵌套进报告结构中[src/code_agent/core/schemas.py:29]。\n\n而 `ReviewIssue` 本身是一个继承自 `BaseModel` 的 Pydantic 模型，其各字段（`file_path`、`line_number`、`severity`、`issue_type`、`message`、`suggestion`）均用 `Field` 声明了描述信息，其中 `severity` 的类型为枚举 `Severity`[src/code_agent/core/schemas.py:10-19]。`Severity` 枚举定义了 `fatal`、`warning`、`info` 三个取值[src/code_agent/core/schemas.py:4-7]。\n\n**补充说明（结构化输出的使用）**\n\n`review_code` 中通过 `actual_model.with_structured_output(ReviewReport)` 让模型按 `ReviewReport` 结构输出，并在结果不是 `ReviewReport` 实例时用 `ReviewReport.model_validate(report)` 进行校验转换[src/code_agent/core/model.py:68-77]。",
+      "total_tokens": 1810
+    },
+    {
+      "id": "023",
+      "type": "behavior",
+      "question": "validate_citations 批量校验函数是如何通过列表推导式复用单条校验函数 validate_citation 的？",
+      "is_passed": true,
+      "latency": 1.8632497787475586,
+      "fail_reason": "",
+      "answer": "`validate_citations` 通过列表推导式对传入的 `citations` 列表逐项调用 `validate_citation`，并把 `base_dir` 原样透传，从而复用单条校验逻辑，最终返回结果列表 [src/code_agent/core/citation.py:189-194]。\n\n具体来看：\n\n- 函数签名为 `validate_citations(citations: list[Citation], base_dir: Path | str | None = None) -> list[CitationValidationResult]`，接收引用列表与可选的基准目录，返回校验结果列表 [src/code_agent/core/citation.py:189-192]。\n- 函数体只有一行 `return [validate_citation(c, base_dir=base_dir) for c in citations]`，即对每个 `c` 调用单条校验函数 `validate_citation`，并以关键字参数 `base_dir=base_dir` 传入同一基准目录 [src/code_agent/core/citation.py:194]。\n- 被复用的 `validate_citation` 负责单条引用的完整校验流程：先通过 `_resolve_file_path` 定位真实文件，再检查文件是否存在，读取内容并计算总行数，最后做行号边界防御校验 [src/code_agent/core/citation.py:127-180]。\n\n因此，批量函数本身不重复实现任何校验逻辑，只是把“逐条校验”的职责委托给 `validate_citation`，通过列表推导式完成遍历与结果收集 [src/code_agent/core/citation.py:189-194]。",
+      "total_tokens": 1998
+    },
+    {
+      "id": "024",
+      "type": "boundary",
+      "question": "项目中用于使用 Python AST 语法树按函数切块的 AstCodeChunker 类在哪个文件哪一行？",
+      "is_passed": true,
+      "latency": 1.0786995887756348,
+      "fail_reason": "",
+      "answer": "无依据。\n\n提供的参考代码片段中只包含 `src/code_agent/eval.py` 的入口逻辑 [src/code_agent/eval.py:1-17]，以及 `src/code_agent/index/bm25_index.py` 中的 `CodeChunk`、`tokenize_code`、`chunk_file` 和 `BM25CodeIndex` 等实现 [src/code_agent/index/bm25_index.py:1-60] [src/code_agent/index/bm25_index.py:41-100]。其中按文件切块使用的是基于行数滑动窗口的 `chunk_file` 函数 [src/code_agent/index/bm25_index.py:24-58]，并未出现任何基于 Python AST 语法树按函数切块的 `AstCodeChunker` 类，因此无法给出其所在文件与行号。",
+      "total_tokens": 1515
+    },
+    {
+      "id": "025",
+      "type": "boundary",
+      "question": "项目中用于向 Prometheus 导出 Token 消耗与评测指标的 PrometheusMetricsExporter 类在何处？",
+      "is_passed": true,
+      "latency": 1.1062746047973633,
+      "fail_reason": "",
+      "answer": "无依据。\n\n参考代码片段仅包含 `src/code_agent/core/model.py` 第 1~60 行，其中定义了 `stream_ask` 和 `get_chat_model` 等函数 [src/code_agent/core/model.py:24-60]，并未出现 `PrometheusMetricsExporter` 类，也没有任何与 Prometheus 导出 Token 消耗或评测指标相关的实现。因此无法根据所给代码片段确定该类的位置。",
+      "total_tokens": 848
+    }
+  ]
+}

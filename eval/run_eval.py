@@ -5,14 +5,14 @@ from pathlib import Path
 from dataclasses import dataclass, field
 import yaml
 import argparse
+from code_agent.core.context import build_snippets_text
 
 # 1. Windows 控制台防乱码与 emoji 保护
 if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8")
 
 # 2. 注入工程根目录与 src 目录，确保平稳导入
 root_dir = Path(__file__).resolve().parent.parent
@@ -103,7 +103,6 @@ def evaluate_single_case(
 
     # 1. BM25 检索相关代码片段
     results = indexer.search(case.question, top_k=top_k)
-    snippets_text = ""
 
     # 判定检索阶段是否成功召回了期望文件（Stage 1: 检索召回判断）
     retrieval_file_hit = False
@@ -119,21 +118,7 @@ def evaluate_single_case(
                 retrieval_file_hit = True
                 break
 
-    if results:
-        for i, (chunk, score) in enumerate(results, 1):
-            # 方案 A 数据源治理：将物理绝对路径转为相对于工程根目录的标准相对路径（消除 Windows 盘符冒号）
-            raw_path = Path(chunk.file_path)
-            if base_dir:
-                try:
-                    rel_path = raw_path.resolve().relative_to(Path(base_dir).resolve())
-                    clean_path = str(rel_path).replace("\\", "/")
-                except ValueError:
-                    clean_path = str(raw_path).replace("\\", "/")
-            else:
-                clean_path = str(raw_path).replace("\\", "/")
-
-            snippets_text += f"\n--- 片段 {i}: {clean_path} (第 {chunk.start_line}~{chunk.end_line} 行) ---\n"
-            snippets_text += chunk.content + "\n"
+    snippets_text = build_snippets_text(results, base_dir=base_dir)
 
     # 2. 组装 Prompt 并调用大模型
     system_prompt = (
@@ -254,7 +239,7 @@ def evaluate_single_case(
 
 def generate_markdown_report(
         results: list[CaseResult],
-        report_file: Path | None = None,
+        report_file: Path,
         top_k : int = 3,
 )->None:
     """生成结构清晰的 Markdown 评测报告 (包含大盘指标、失败归因与全量清单)"""
@@ -448,6 +433,8 @@ def run_eval(cases_dir: Path,
     citation_valid_rate = (valid_citations / total_citations * 100) if total_citations else 0.0
     boundary_rate = (boundary_passed / len(boundary_cases) * 100) if boundary_cases else 0.0
     avg_latency = sum(r.latency for r in results) / total if total else 0.0
+    total_tokens = sum(r.total_tokens for r in results)
+    avg_tokens = total_tokens / total if total else 0.0
 
     print("\n" + "=" * 70)
     print("📊 【评测大盘总结 (Benchmark Summary)】")
@@ -458,6 +445,8 @@ def run_eval(cases_dir: Path,
     print(f"  - 引用物理有效率:     {citation_valid_rate:.1f}% ({valid_citations}/{total_citations})")
     print(f"  - 虚构边界防御率:     {boundary_rate:.1f}% ({boundary_passed}/{len(boundary_cases)})")
     print(f"  - 平均单题耗时:       {avg_latency:.2f}s")
+    print(f"  - 总消耗 Token:       {total_tokens:,} tok")
+    print(f"  - 单题平均 Token:     {avg_tokens:.0f} tok")
     print("=" * 70)
 
     # 6. 保存基线结果 JSON（仅在非重放调试且指定了 output_file 时保存）
@@ -480,6 +469,7 @@ def run_eval(cases_dir: Path,
                     "latency": r.latency,
                     "fail_reason": r.fail_reason,
                     "answer": r.answer,
+                    "total_tokens": r.total_tokens,
                 }
                 for r in results
             ],
@@ -535,8 +525,19 @@ def main():
             case_filter = args.replay
 
 
-    output_file = Path(args.output) if args.output else (runs_dir / "baseline_bm25.json")
-    report_file = Path(args.report) if args.report else (runs_dir / "report-001.md")
+    if args.output:
+        output_file: Path | None = Path(args.output)
+    elif case_filter:
+        output_file = None            # 局部调试不落盘，保护历史基线
+    else:
+        output_file = runs_dir / "baseline_bm25.json"
+
+    if args.report:
+        report_file: Path | None = Path(args.report)
+    elif case_filter:
+        report_file = None
+    else:
+        report_file = runs_dir / "report-001.md"
 
     run_eval(
         cases_dir,

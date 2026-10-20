@@ -129,3 +129,63 @@
 * **解决与演进**：
   重构判卷准则：引入复合守卫 `not (file_hit and symbol_hit and valid_citations_count >= 1)`。只有当关键符号未命中或合法引用数为 0 时，“无依据”才被采纳为全局拒答；多重命中状态下的局部免责不再误杀。
 
+### 3. PowerShell 把裸逗号参数解析成数组
+* **遇到的问题**：
+  `python -m code_agent.eval --case 001,005` 报 `未找到匹配的用例: '1,5'`，两条用例全部匹配失败。
+* **坑在哪里**：
+  PowerShell 把 `,` 当作数组分隔符、`001`/`005` 当作数字字面量（前导零丢失），直到与原生 exe 交互时才拼回字符串，所以程序收到的是 `1,5`。数据在到达 argparse 之前就被外壳层改写过，与 Windows 盘符冒号被正则误判属同一类“入口数据失真”。
+* **解决与梳理**：
+  含逗号或前导零的参数一律加双引号（`--case "001,005"`）；单值参数可裸写。排查顺序应是“外壳层 → 程序层 → 业务层”，而不是一上来改业务代码。
+
+### 4. 调用点判空埋下 UnboundLocalError
+* **遇到的问题**：
+  片段拼装改成 `if results: snippets_text = build_snippets_text(...)` 后，25 题全通；但该分支在召回为空时不会赋值，后续组装 Prompt 会抛 `UnboundLocalError`。
+* **坑在哪里**：
+  判空责任被放到了调用点，而空集合本是函数的合法输入；100% 的召回率恰好把 0% 召回的分支完全遮蔽，问题被“全绿”隐藏。
+* **解决与梳理**：
+  让 `build_snippets_text([])` 返回 `""`，调用点无条件赋值，并删除原先的 `snippets_text = ""` 预初始化。判空责任归属“处理集合的函数”，不归属每个调用点。
+
+---
+
+## 五、类型检查与静态分析避坑
+
+### 1. `dict[Any, Any]` 接不住 TypedDict
+* **遇到的问题**：
+  `usage = {}` 之后 `usage = chunk.usage_metadata` 先报 `var-annotated`，再报 `assignment`。
+* **坑在哪里**：
+  空 dict 被 mypy 冻结为 `dict[Any, Any]`；`UsageMetadata` 是 TypedDict，被当作只读结构，不作为 `dict` 子类参与赋值。改成 `dict[str, int]` 同样不行，因为 dict 的值类型不变。
+* **解决与梳理**：
+  显式声明 `usage: Mapping[str, Any] = {}`：只读协议负责承接结构，值类型用 `Any` 保留 `.get()` 的宽松推断。
+
+### 2. 同一函数内变量类型按首次赋值贯穿
+* **遇到的问题**：
+  `cli.py` 中 `for rank, (chunk, score) in ...` 之后再用 `for chunk in stream_ask(...)`，报 `assignment` 与 `operator`（str 与 CodeChunk 相加）。
+* **坑在哪里**：
+  mypy 对函数级变量只推断一次，后续赋值必须兼容；报错落点在第二次赋值，而不是真正引入两义的第一处，容易误判成“循环写错了”。
+* **解决与梳理**：
+  换变量名（`piece`）。不要用 `# type: ignore` 或重新声明注解掩盖作用域污染，因为那掩盖的是“一个变量承载两种概念”的设计问题。
+
+### 3. `sys.stdout` 的静态类型是 `TextIO`，没有 `reconfigure`
+* **遇到的问题**：
+  `sys.stdout.reconfigure(encoding="utf-8")` 报 `union-attr`，运行时却正常。
+* **坑在哪里**：
+  `reconfigure` 是 `TextIOWrapper` 的方法，而标准流被标注为更宽的 `TextIO` 协议；`cast` 能让检查器闭嘴，但 stdout 被重定向到管道或文件时会真炸。
+* **解决与梳理**：
+  `getattr(stream, "reconfigure", None)` + `callable()` 守卫：静态与运行期同时安全，且重定向场景自动跳过。
+
+### 4. `cast` 是静态撒谎，`isinstance` + `model_validate` 才是契约
+* **遇到的问题**：
+  `with_structured_output` 的静态返回类型是 `dict[str, Any] | BaseModel`，直接 return 报 `return-value`。
+* **坑在哪里**：
+  `cast(ReviewReport, x)` 只对检查器生效；模型真返回畸形 dict 时，错误会被推迟到下游 `report.score` 处的远程 AttributeError，栈里已经看不到根因。
+* **解决与梳理**：
+  `isinstance` 收窄 + `ReviewReport.model_validate(report)` 兜底，让类型断言同时承担运行期校验，静态证据与运行期契约合一。
+
+### 5. 结构化审查的行号契约：必须是绝对行号
+* **遇到的问题**：
+  `ReviewReport.issues[].line_number` 若来自片段而非整文件，会整体偏移，报告指错行。
+* **坑在哪里**：
+  `review_code` 当前喂入整份文件，模型看到的行号天然等于物理行号，越界校验才有意义；一旦改为只喂切片，必须注入片段起始偏移才能对齐，否则校验器会把全部行号判为越界。
+* **解决与梳理**：
+  保持“整文件 + 绝对行号”不变式，并在 System Prompt 中显式声明；渲染前用 `1 <= line_number <= total_lines` 做越界标注，而不是静默过滤——静默过滤会让人误以为“代码很干净”。
+

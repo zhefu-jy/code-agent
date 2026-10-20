@@ -12,3 +12,27 @@ dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["rank_bm25","rank_bm25.*"]
+ignore_missing_imports = true
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "eval"]
+
+no_implicit_optional = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+show_error_codes = true
+pretty = true
+exclude = '(^|/)(\.venv|venv|build|dist|\.mypy_cache|\.pytest_cache)(/|$)|\.egg-info'
+
+[[tool.mypy.overrides]]
+module = ["rank_bm25", "rank_bm25.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

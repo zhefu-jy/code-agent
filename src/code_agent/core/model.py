@@ -1,7 +1,8 @@
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
-from typing import Iterator
+from typing import Any, Iterator
+from collections.abc import Mapping
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from loguru import logger
 import time
@@ -22,11 +23,11 @@ load_dotenv(override=True)
 
 def stream_ask(messages:list[BaseMessage],model:BaseChatModel | None = None) -> Iterator[str]:
     start_time = time.perf_counter()
-    usage = {}
+    usage: Mapping[str, Any] = {}
 
     actual_model =  model if model is not None else get_chat_model()
     for chunk in actual_model.stream(messages):
-        if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+        if chunk.usage_metadata:
             usage = chunk.usage_metadata
         if isinstance(chunk.content,str):
             yield chunk.content
@@ -68,9 +69,17 @@ def review_code(code:str,file_path:str = "snippet.py",model:BaseChatModel | None
     actual_model =  model if model is not None else get_chat_model(temperature=0.0)
     structured_llm =  actual_model.with_structured_output(ReviewReport)
     messages = [
-        SystemMessage(content="你是一个代码审查助手。"),
+        SystemMessage(content=(
+            "你是一个严格的 Python 代码审查助手。"
+            "只报告代码中真实存在、可精确定位的问题，不要泛泛而谈，不要复述代码原文。"
+            "line_number 必须是被审查代码中的绝对行号（从 1 开始），不得编造。"
+            "若代码没有实质问题，issues 返回空列表。"
+        )),
         HumanMessage(content=f"请审查以下代码，并给出详细的问题总结。代码文件路径：{file_path}。代码内容：{code}。")
     ]
-    return structured_llm.invoke(messages)
+    report =  structured_llm.invoke(messages)
+    if isinstance(report,ReviewReport):
+        return report
+    return ReviewReport.model_validate(report)
 
 

@@ -2,6 +2,26 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-10-20 (Day 13 · W4 W 类型清零、CLI 审查链路与阶段验收)
+
+### 一、今日完成事项
+1. 统一静态检查规范：`pyproject.toml` 增加 `[tool.mypy]`（`files`、`no_implicit_optional`、`warn_return_any`、`exclude`）与 `[tool.pytest.ini_options]`（`testpaths=["tests"]`），消除根目录 smoke 脚本被 pytest 误收集导致的真实 API 调用。
+2. `mypy src eval` 的 11 条隐患清零：删除 `bm25_index.py` 幽灵导入；`usage` 改 `Mapping[str, Any]` 承接 TypedDict；`review_code` 以 `isinstance` 收窄 + `model_validate` 兜底；`cli.py` 修复 `chunk` 跨类型复用；`run_eval.py` 修复 `TextIO.reconfigure`、`Optional` 穿透与 usage 二次赋值。静态检查全绿（9 个源文件）。
+3. 抽取 `core/context.py`（`to_repo_relative` / `build_snippets_text`），让 CLI 与评测共用同一份相对路径片段拼装；同时修掉 `-c` 单题调试会覆盖 `baseline_bm25.json` 与 `report-001.md` 的默认值地雷。
+4. 三连回归：pytest 13 passed（0.39s，全程离线）；`python -m code_agent.eval --output eval/runs/run-004.json --report eval/runs/report-004.md` 跑出 25/25、引用 120/120、均耗 1.55s、单题均耗 1,763 tok，与 report-003 的 1,757 tok 相比仅 +0.3%，证明抽函数属零行为变更。
+5. CLI 上线 `/review`：路径解析基准改为仓库根、800 行规模闸门、结构化 Pydantic 报告渲染（severity 分级）、`issue.line_number` 物理越界校验、审查调用异常隔离。
+6. 端到端实机自检：用 CLI 审查 `src/code_agent/index/bm25_index.py` 与手工植入缺陷的样例文件，逐条核对报告中的行号与缺陷实际行号的一致性。
+
+### 二、今日有价值提问清单（复习索引）
+1. 为什么 `usage: dict[Any, Any]` 接不住 `UsageMetadata`，而 `Mapping[str, Any]` 可以？
+2. `cast(ReviewReport, x)` 与 `isinstance` + `model_validate` 的本质差异是什么？
+3. 为什么 PowerShell 里裸写 `--case 001,005` 会变成 `'1,5'`？
+4. `if results:` 这种“调用点判空”为什么会埋下 `UnboundLocalError`？
+5. “数据源治理”与“下游补丁”的判据是什么？为什么说治理上下文等于治理输出？
+6. 为什么 `review_code` 从 W1 就写好了，直到 W4 W 才第一次有人真的用它？一个函数变成“产品能力”缺的是哪三样？
+
+---
+
 ## 2026-10-19 (Day 12 · W4 S3 模块化评测与 Replay 白盒调试模式)
 
 ### 一、今日完成事项
