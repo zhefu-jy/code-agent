@@ -2,6 +2,31 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-10-21 (Day 14 · W1~W4 架构全局复盘与 Python 底层机制巩固)
+
+### 一、今日完成事项
+1. W1~W4 全局架构与数据流图梳理：绘制 CLI 端到端交互主流程、评测引擎双阶段判定流，厘清表现层、检索层、上下文治理层与评测体系四大子系统职责。
+2. 基础语法与核心机制专项吃透：
+   - 彻底推导 BM25 切片排序 `sorted(enumerate(scores), ...)` 下标绑定与 `(chunk, score)` 实体指标元组契约；
+   - 深入剖析 CWD 运行目录漂移与全工程相对路径标尺一致性，明确 `base_dir` 统一对齐的物理原因与防御降级机制；
+   - 深度辨析普通 class、`@dataclass` 与 Pydantic `BaseModel` 的底层差异与分工边界，吃透大模型 `with_structured_output` 依赖 JSON Schema 生成与递归反序列化的核心机制。
+3. 工程构建与评测内核深度复盘：
+   - 厘清 `pyproject.toml` 在现代 Python 工程中的核心职能（包元数据管理、`pip install -e .` 可编辑挂载消除寻址红线、以及开发工具链集中统管）；
+   - 拆解 `run_eval.py` 的 Stage 1 检索命中与 Stage 2 推理引用命中解耦逻辑、关键符号全量匹配机制，以及单题调试保护基线大盘的防覆盖规则。
+4. 沉淀至实战备忘录：在 `notes.md` 中新增检索下标绑定元组契约、CWD 路径漂移防御、双阶段评测解耦与基线防冲刷保护、以及第六章数据建模选型机制避坑。
+
+### 二、今日有价值提问清单（复习索引）
+1. `sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:top_k]` 是如何运作的？为什么下游返回必须是 `(chunk, score)` 元组？
+2. 全工程路径转换中，如果 CLI 与 Eval 传入的 `base_dir` 不一致会有什么物理后果？
+3. 如果只写普通 class，不加 `@dataclass`、不继承 `BaseModel`，不能达到同样的效果吗？
+4. 为什么大模型结构化输出 `with_structured_output` 必须依赖 `BaseModel`，而普通 class 或 `@dataclass` 无法胜任？
+5. `pyproject.toml` 这个文件在现代 Python 项目中到底有什么用？为什么能彻底解决 IDE 模块寻址报错和 `sys.path.insert`？
+6. `run_eval.py` 中如何解耦判定“Stage 1 检索命中”与“Stage 2 推理引用命中”？
+7. 判卷器面对虚构钓鱼题、行号幻觉以及局部免责时是如何做阶梯防御的？
+8. `eval/runs/` 目录的生成与覆盖规则是怎样的？单题调试时为什么不能覆盖 `baseline_bm25.json`？
+
+---
+
 ## 2026-10-20 (Day 13 · W4 W 类型清零、CLI 审查链路与阶段验收)
 
 ### 一、今日完成事项

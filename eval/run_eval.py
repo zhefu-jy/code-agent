@@ -49,7 +49,7 @@ class CaseResult:
     """单题运行评测指标与结果"""
     case: EvalCase
     answer: str
-    latency: float
+    latency: float #单题耗时
     is_completed: bool  # 模型是否成功回答且未报错
     has_no_evidence_declared: bool  # 是否声明了无依据
     citations_count: int  # 提取到的引用总数
