@@ -54,6 +54,28 @@
 
 ---
 
+### 5. AST 语法切块中模块头全量扫描导致的行号穿透陷阱
+* **遇到的问题**：
+  在实现 `ast_chunker.py` 提取模块头部 Imports 与全局定义时，`citation.py` 的首个切块被异常扩大为“第 1 行到第 95 行”，将中间的 `Citation` 类与 `extract_citations` 函数全部吞入重复打包。
+* **坑在哪里**：
+  初始写法使用列表推导式遍历 `tree.body` 中所有的 `(ast.Import, ast.Assign)` 节点，并用 `max(end_lineno)` 确定头部终点。然而，Python 业务文件中常常在中间或函数之间定义全局变量（如第 92 行的 `_NO_EVIDENCE_PATTERN = re.compile(...)`）。全量扫描导致 `last_line` 直接穿透至全文件末尾的变量，破坏了语义切块的局部性。
+* **解决与梳理**：
+  - **对称性收敛原则**：类头是从“类起始行截取至首个方法之前”；同理，模块头是从“文件第 1 行截取至首个类定义（`ClassDef`）或独立函数定义（`FunctionDef`）出现之前”；
+  - **即时截断守卫**：遍历 `tree.body` 时一旦遇到类或函数即刻 `break` 刹车，严禁跨越业务边界扫描全局赋值，确保头部块严格只包含顶层 Imports 与前置全局元数据。
+
+---
+
+### 6. 独立方法切块后的“类名上下文孤儿”与 Prefix 索引补偿机制
+* **遇到的问题**：
+  当一个大类（如 `BM25CodeIndex`）的方法被单独拆分成独立切块时，针对“BM25CodeIndex search”或“BM25CodeIndex 的检索实现”提问，该方法切块的 BM25 检索得分可能为 0。
+* **坑在哪里**：
+  切出的方法代码块仅包含 `def search(self, ...):` 自身源码，源码文本中从头到尾未出现过父类名 `BM25CodeIndex`。基于词频统计的倒排索引无法建立方法与类的语义联系，产生“上下文孤儿”现象。
+* **解决与梳理**：
+  - **保持代码原貌**：不要向源码正文中硬拼注释前缀，防止破坏物理行号对齐与单测校验；
+  - **元数据与索引前缀补偿**：切分方法时向 `_chunk_function` 传入 `prefix=f"{node.name}."`，在生成分词索引时显式将 `f"{prefix}{func_name}"`（如 `BM25CodeIndex.search`）注入 `tokens`。使该块在物理代码上保持纯净，但在检索维度天然具备父类命名空间权重。
+
+---
+
 ## 二、评测执行器与判卷逻辑避坑
 
 ### 1. 评测定位黑盒问题（看不清切片证据）
@@ -223,6 +245,18 @@
   `review_code` 当前喂入整份文件，模型看到的行号天然等于物理行号，越界校验才有意义；一旦改为只喂切片，必须注入片段起始偏移才能对齐，否则校验器会把全部行号判为越界。
 * **解决与梳理**：
   保持“整文件 + 绝对行号”不变式，并在 System Prompt 中显式声明；渲染前用 `1 <= line_number <= total_lines` 做越界标注，而不是静默过滤——静默过滤会让人误以为“代码很干净”。
+
+---
+
+### 6. `list.append()` vs `list.extend()` 在泛型容器 `List[T]` 中的容器嵌套陷阱
+* **遇到的问题**：
+  `chunks: List[CodeChunk] = []` 中执行 `chunks.append(self._chunk_function(...))` 时，mypy 报 `Argument 1 to "append" of "list" has incompatible type "list[CodeChunk]"; expected "CodeChunk"`。
+* **坑在哪里**：
+  - `_chunk_function` 与 `_chunk_class` 返回的是子列表 `List[CodeChunk]`；
+  - `list.append(x)` 仅将对象整体作为单一元素压入尾部，导致生成了嵌套列表 `[CodeChunk, [CodeChunk, ...]]`；
+  - 若无静态类型拦截，Python 解释器能正常执行不会报 SyntaxError，但在下游 `for c in chunks: c.tokens` 时会爆发远程 `AttributeError: 'list' object has no attribute 'tokens'`。
+* **解决与梳理**：
+  子列表合并至主列表时严格使用 `chunks.extend(...)` 展开迭代器；静态类型系统能在运行期执行前彻底掐死容器结构错位的隐患。
 
 ---
 
