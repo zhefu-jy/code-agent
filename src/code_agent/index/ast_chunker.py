@@ -53,6 +53,7 @@ class ASTChunker:
                         end_line = last_line,
                         content = header_text,
                         tokens = tokens,
+
                     )
                 )
 
@@ -81,9 +82,10 @@ class ASTChunker:
         end = node.end_lineno or node.lineno
         func_text = "\n".join(lines[start - 1 : end])
         tokens = tokenize_code(func_text)
+        full_name = f"{prefix}{node.name}"
 
         if prefix:
-            tokens.extend(tokenize_code(f"{prefix}{node.name}"))
+            tokens.extend(tokenize_code(full_name))
 
         if not tokens:
             return []
@@ -94,6 +96,7 @@ class ASTChunker:
                 end_line=end,
                 content=func_text,
                 tokens=tokens,
+                symbol_name=full_name
             )
         ]
 
@@ -120,6 +123,7 @@ class ASTChunker:
                         end_line=end,
                         content=class_text,
                         tokens=tokens,
+                        symbol_name=node.name
                     )
                 ]
 
@@ -145,6 +149,7 @@ class ASTChunker:
                             end_line=header_end,
                             content=header_text,
                             tokens=tokens,
+                            symbol_name=f"{node.name} (header)",
                         )
                     )
         #遍历类内每个方法进行切块

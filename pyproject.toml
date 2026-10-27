@@ -8,14 +8,12 @@ version = "0.1.0"
 description = "基于大模型与代码检索的本地工程代码助手"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "chromadb>=0.4.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[[tool.mypy.overrides]]
-module = ["rank_bm25","rank_bm25.*"]
-ignore_missing_imports = true
 
 [tool.mypy]
 python_version = "3.12"
@@ -30,7 +28,7 @@ pretty = true
 exclude = '(^|/)(\.venv|venv|build|dist|\.mypy_cache|\.pytest_cache)(/|$)|\.egg-info'
 
 [[tool.mypy.overrides]]
-module = ["rank_bm25", "rank_bm25.*"]
+module = ["rank_bm25", "rank_bm25.*", "chromadb", "chromadb.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

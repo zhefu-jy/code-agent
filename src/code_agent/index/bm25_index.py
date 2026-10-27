@@ -11,6 +11,7 @@ class CodeChunk:
     end_line:int
     content:str
     tokens:list[str]
+    symbol_name: str = ""
 
 
 def tokenize_code(text:str) ->list[str]:

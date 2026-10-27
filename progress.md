@@ -2,6 +2,25 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-10-27 (Day 16 · W5 S2 纯本地轻量向量索引与语义检索对照实验)
+
+### 一、今日完成事项
+1. 搭建纯本地轻量向量底座：引入向量库 `chromadb` 与本地 ONNX Embedding 模型（`all-MiniLM-L6-v2`），免 Docker 且 100% 离线本地计算。
+2. 扩展代码切块数据契约：在 `CodeChunk` 数据结构中新增 `symbol_name` 符号元数据字段，联动 `ASTChunker` 在切块时持久化函数名、类名及方法作用域前缀。
+3. 手写语义向量索引器：实现 `src/code_agent/index/vector_index.py`（`VectorCodeIndex`），承接 AST 语法感知切块输出，配置余弦空间（`hnsw:space: cosine`）与分批入库持久化（`file_path`、`start_line`、`end_line`、`symbol_name`），实现余弦相似度检索接口 `search(query, top_k) -> list[tuple[CodeChunk, float]]`。
+4. 攻克 Chroma 类型系统与 Python List 不变性隐患：解决 `metadatas` 传参时 mypy 报出的类型不兼容问题，通过直接引入 `chromadb.api.types.Metadata` 消除静态类型告警，保持 `mypy src eval` 零告警清零。
+5. 编写与运行自动化单元测试：编写 `tests/test_vector_index.py`，覆盖多语义概念检索、AST 代码块定位与空查询异常防御，全量 15 个 pytest 单测全绿通过（1.33s）。
+6. 实机运行词法 vs 语义召回对照实验：编写并实跑 `scripts/compare_bm25_vs_vector.py`，用真实数据量化证实了 BM25 在纯中文环境下的“语义蒸发”盲区与向量检索的泛化命中能力。
+
+### 二、今日有价值提问清单（复习索引）
+1. `CodeChunk` 已经有了 `content` 和 `file_path`，为什么还需要单独加一个 `symbol_name` 字段？它在检索和 Agent 演进中有什么意义？
+2. 为什么向量库的距离度量空间要选择 `cosine`（余弦距离）而不是默认的 `l2`（欧氏距离）？
+3. ChromaDB 返回的余弦距离公式是 $1 - \cos(\theta)$，我们如何将其换算为下游检索打分所需的相似度得分？
+4. 为什么在 Python 静态类型系统中，`list[dict[str, Any]]` 不能直接传递给期待 `list[Metadata]` 的参数？（List 的不变量机制）
+5. 纯 Prompt 约束（如 `agent.md`）与代码物理防御（如 Hook/拦截器/状态机）在控制大模型越界行为上有什么本质差异？
+
+---
+
 ## 2026-10-26 (Day 15 · W5 S1 AST 语法感知切块与结构化解析)
 
 ### 一、今日完成事项
