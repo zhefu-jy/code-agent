@@ -83,6 +83,19 @@ class BM25CodeIndex:
 
         return len(self.chunks)
 
+    def build_from_chunks(self,chunks: list[CodeChunk]) -> int:
+        """
+        直接加载预先切好的代码块（如 ASTChunker 产物）并构建倒排索引。
+        确保与向量库共享完全一致的切块实体与行号标尺。
+        """
+        self.chunks = list(chunks)
+        if self.chunks:
+            corpus = [c.tokens for c in self.chunks]
+            self.bm25 = BM25Okapi(corpus)
+        else:
+            self.bm25 = None
+        return len(self.chunks)
+
     def search(self, query: str, top_k: int = 3) -> list[tuple[CodeChunk, float]]:
         """根据查询词检索最相关的代码块"""
         if not self.bm25 or not self.chunks:

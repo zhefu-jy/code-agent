@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from code_agent.index.hybrid_retriever import HybridRetriever
 
 # 确保在任意工作目录下直接执行此脚本都能正确找到包
 src_dir = str(Path(__file__).resolve().parent.parent)
@@ -90,14 +91,13 @@ def handle_review(raw_arg: str) -> None:
 
 
 def main() -> None:
-
-    indexer = BM25CodeIndex()
-    # 自动索引本地 src 目录下的代码
-    chunk_count = indexer.build_from_directory(Path(src_dir))
+    # 初始化双路混合检索器（alpha=0.5 词法语义均衡）
+    retriever = HybridRetriever(alpha=0.5)
+    chunk_count = retriever.build_from_directory(Path(src_dir))
     print("=" * 60)
-    print(f"🚀 Code-Agent 已启动！(已索引 {chunk_count} 个本地代码切块)")
+    print(f"🚀 Code-Agent 已启动！(已构建 AST 混合检索双路索引，共 {chunk_count} 个语义切块)")
     print("  - 普通对话：直接输入问题与模型对话")
-    print("  - 检索代码：输入 /search <关键词> (例如: /search stream ask)")
+    print("  - 检索代码：输入 /search <关键词/语义意图> (例如: /search stream ask)")
     print("  - 审查文件：输入 /review <文件路径> (例如: /review src/code_agent/cli.py)")
     print("  - 退出程序：输入 exit")
     print("=" * 60 + "\n")
@@ -114,35 +114,31 @@ def main() -> None:
         if input_question.startswith("/search"):
             query = input_question.replace("/search", "").strip()
             if not query:
-                print("⚠️ 请提供要搜索的关键词，例如: /search review_code\n")
+                print("⚠️ 请提供要搜索的内容，例如: /search review_code 或 /search 校验引用合法性\n")
                 continue
 
-            results = indexer.search(query, top_k=3)
+            results = retriever.search(query, top_k=3)
             if not results:
                 print(f"🔍 未在代码库中找到与 '{query}' 相关的代码片段。\n")
             else:
                 print(f"\n🔍 找到 {len(results)} 处高度相关的代码片段:")
-                for rank, (chunk, score) in enumerate(results, 1):
+                for rank, hit in enumerate(results, 1):
+                    tag_map = {
+                        "BOTH": "🔀 [双路共同命中]",
+                        "VECTOR": "🧠 [语义向量命中]",
+                        "BM25": "🔤 [词法关键词命中]",
+                    }
+                    tag = tag_map.get(hit.source, hit.source)
+                    display_file = to_repo_relative(Path(hit.chunk.file_path), base_dir=REPO_ROOT)
                     print(
-                        f"【TOP {rank}】得分: {score:.2f} | 文件: {chunk.file_path} (第 {chunk.start_line}~{chunk.end_line} 行)")
-                    print("-" * 50)
-                    print(chunk.content)
-                    print("-" * 50 + "\n")
+                        f"【TOP {rank}】{tag} 融合分: {hit.score:.4f} "
+                        f"(BM25归一: {hit.bm25_norm_score:.2f} | 向量归一: {hit.vec_norm_score:.2f}) "
+                        f"| {display_file} (第 {hit.chunk.start_line}~{hit.chunk.end_line} 行)"
+                    )
+                    print("-" * 60)
+                    print(hit.chunk.content)
+                    print("-" * 60 + "\n")
             continue
-
-        if input_question.startswith("/review"):
-            handle_review(input_question[len("/review"):].strip())
-            continue
-
-        messages.append(HumanMessage(content=input_question))
-        full_answer = ""
-        print("Agent: ", end="", flush=True)
-        for piece in stream_ask(messages):
-            full_answer += piece
-            print(piece, end="", flush=True)
-
-        messages.append(AIMessage(content=full_answer))
-        print("-" * 60)
 
 
 
