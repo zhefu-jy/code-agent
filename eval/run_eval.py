@@ -23,7 +23,9 @@ if str(src_dic) not in sys.path:
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from code_agent.core.model import get_chat_model
-from code_agent.index.bm25_index import BM25CodeIndex
+from code_agent.index.bm25_index import BM25CodeIndex, CodeChunk
+from code_agent.index.vector_index import VectorCodeIndex
+from code_agent.index.hybrid_retriever import HybridRetriever, HybridSearchResult
 from code_agent.core.citation import (
     CITATION_PROMPT_REQUIREMENT,
     extract_citations,
@@ -92,7 +94,7 @@ def load_cases(cases_dir:Path) -> list[EvalCase]:
 
 def evaluate_single_case(
                             case: EvalCase,
-                            indexer: BM25CodeIndex,
+                            indexer: BM25CodeIndex | VectorCodeIndex | HybridRetriever,
                             model,
                             top_k: int = 3,
                             base_dir: Path | None = None,
@@ -102,7 +104,14 @@ def evaluate_single_case(
     fail_reasons = []
 
     # 1. BM25 检索相关代码片段
-    results = indexer.search(case.question, top_k=top_k)
+    raw_results = indexer.search(case.question, top_k=top_k)
+    hits: list[tuple[CodeChunk, float]] = []
+
+    for item in raw_results:
+        if isinstance(item,HybridSearchResult):
+            hits.append((item.chunk, item.score))
+        else:
+            hits.append(item)
 
     # 判定检索阶段是否成功召回了期望文件（Stage 1: 检索召回判断）
     retrieval_file_hit = False
@@ -110,15 +119,15 @@ def evaluate_single_case(
     # 如果本身就没有期望文件，则默认召回成功
     if not case.expected_files:
         retrieval_file_hit = True
-    elif results:
-        retrieved_paths =[Path(chunk.file_path).as_posix().lower() for chunk, _ in results]
+    elif hits:
+        retrieved_paths =[Path(chunk.file_path).as_posix().lower() for chunk, _ in hits]
         for exp_f in case.expected_files:
             clean_exp = Path(exp_f).as_posix().lower()
             if any(clean_exp in rp or rp.endswith(clean_exp) for rp in retrieved_paths):
                 retrieval_file_hit = True
                 break
 
-    snippets_text = build_snippets_text(results, base_dir=base_dir)
+    snippets_text = build_snippets_text(hits, base_dir=base_dir)
 
     # 2. 组装 Prompt 并调用大模型
     system_prompt = (
@@ -240,6 +249,7 @@ def evaluate_single_case(
 def generate_markdown_report(
         results: list[CaseResult],
         report_file: Path,
+        retriever_type: str = "hybrid",
         top_k : int = 3,
 )->None:
     """生成结构清晰的 Markdown 评测报告 (包含大盘指标、失败归因与全量清单)"""
@@ -268,7 +278,8 @@ def generate_markdown_report(
     cur_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     lines = []
     lines.append("# Code-Agent 自动化评测报告 (Benchmark Report)")
-    lines.append(f"\n> **评测时间**：{cur_time} ｜ **检索参数**：BM25 (Top-K={top_k}) ｜ **模型**：DeepSeek (temp=0.0)\n")
+    lines.append(
+        f"\n> **评测时间**：{cur_time} ｜ **检索策略**：{retriever_type.upper()} (Top-K={top_k}) ｜ **模型**：DeepSeek (temp=0.0)\n")
     # 一、大盘看板
     lines.append("## 一、评测大盘总结 (Summary Dashboard)")
     lines.append("")
@@ -276,7 +287,7 @@ def generate_markdown_report(
     lines.append("| :--- | :--- | :--- |")
     lines.append(f"| **综合通关率** | **{pass_rate:.1f}%** ({passed_count}/{total}) | 端到端各环节严格通过占比 |")
     lines.append(
-        f"| **检索阶段召回率 (Stage 1)** | **{retrieval_recall:.1f}%** ({retrieval_hits}/{total}) | BM25 Top-K 命中期望目标文件比率 |")
+        f"| **检索阶段召回率 (Stage 1)** | **{retrieval_recall:.1f}%** ({retrieval_hits}/{total}) | {retriever_type.upper()} Top-K 命中期望目标文件比率 |")
     lines.append(
         f"| **模型回答完成率** | **{completion_rate:.1f}%** ({completed_count}/{total}) | 模型未报错且有实质性回答 |")
     lines.append(
@@ -325,6 +336,7 @@ def run_eval(cases_dir: Path,
              output_file: Path | None = None,
              report_file: Path | None = None,
              case_filter: str | None = None,
+             retriever_type: str = "hybrid",
              top_k : int = 3,
              verbose: bool = False, #控制是否详细打印切片
              show_prompt: bool = False, #控制是否打印完整Prompt
@@ -332,15 +344,26 @@ def run_eval(cases_dir: Path,
              ) -> None:
     """运行全量评测并输出基线报告"""
     print("=" * 70)
-    print("🚀 开始执行 Code-Agent 黄金案例集自动化评测 (W2 S3 Baseline)")
+    print(f"🚀 开始执行 Code-Agent 黄金案例集自动化评测 (检索策略: {retriever_type.upper()})")
     print("=" * 70)
 
     # 1. 构建 BM25 本地索引
     root_path = Path(__file__).resolve().parent.parent
     src_path = root_path / "src"
-    print(f"📦 正在扫描并构建索引: {src_path} ...")
-    indexer = BM25CodeIndex()
-    total_chunks = indexer.build_from_directory(src_path)
+    print(f"📦 正在扫描并构建索引 [{retriever_type.upper()}]: {src_path} ...")
+
+    indexer: BM25CodeIndex | VectorCodeIndex | HybridRetriever
+    if retriever_type == "bm25":
+        indexer = BM25CodeIndex()
+        total_chunks = indexer.build_from_directory(src_path)
+    elif retriever_type == "vector":
+        indexer = VectorCodeIndex()
+        total_chunks = indexer.build_from_directory(src_path)
+    elif retriever_type == "hybrid":
+        indexer = HybridRetriever(alpha=0.5)
+        total_chunks = indexer.build_from_directory(src_path)
+    else:
+        raise ValueError(f"不支持的检索策略: {retriever_type}")
     print(f"✅ 索引构建完成，总代码切块数: {total_chunks}")
 
     # 2. 初始化大模型（使用 temperature=0.0 保证评测确定性）
@@ -478,7 +501,7 @@ def run_eval(cases_dir: Path,
             json.dump(dump_data, f, ensure_ascii=False, indent=2)
         print(f"💾 基线数据已成功保存至: {output_file}")
     if report_file:
-        generate_markdown_report(results, report_file, top_k=top_k)
+        generate_markdown_report(results, report_file, retriever_type=retriever_type,top_k=top_k)
 
 
 
@@ -491,6 +514,7 @@ def main():
     parser.add_argument("--report", "-r", type=str, default=None, help="指定 Markdown 报告输出路径")
     parser.add_argument("--verbose","-v", action="store_true", help="打印详细的检索代码切块 Trace")
     parser.add_argument("--prompt", "-p", action="store_true", help="打印喂给大模型的完整 Prompt 原文")
+    parser.add_argument("--retriever",type=str,choices=["bm25","vector","hybrid"],default="hybrid",help="指定检索策略：bm25（词法）、vector（语义向量）、hybrid（双路加权融合，默认）",)
 
     args = parser.parse_args()
 
@@ -544,6 +568,7 @@ def main():
         output_file=output_file,
         report_file=report_file,
         case_filter=case_filter,
+        retriever_type =args.retriever,
         top_k=args.top_k,
         verbose=verbose,
         show_prompt=show_prompt,
