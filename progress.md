@@ -2,6 +2,24 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-04 (Day 19 · W6 S1 开源切块适配与双源数据契约统一)
+
+### 一、今日完成事项
+1. 数据契约多态归一化升级：在 `src/code_agent/index/bm25_index.py` 中为 `CodeChunk` 新增 `source_type: Literal["code", "doc"] = "code"` 与 `title_path: str = ""` 字段，既有 18 个单测全部保持全绿，实现 100% 平滑向后兼容。
+2. 基于 `markdown-it-py` 实现 `MarkdownDocChunker`：在 `src/code_agent/index/markdown_chunker.py` 中编写文档切块器；利用层级栈维护面包屑路径（`title_path`）；实现“纯父级容器标题（紧跟子标题且无正文）跳过”机制消除空切块，并将祖先标题路径注入到子块检索词袋；支持前置引言（Prelude）与无标题文档自动兜底。
+3. 单元测试全量覆盖与实战落地：编写 `tests/test_markdown_chunker.py` 覆盖 6 大测试维度；实切项目真实文档 `docs/ADR-001-技术选型.md`，精准切出 6 个核心决策小节并校验物理行号闭合；全量 24 个单测 100% 通过（1.87s）。
+4. 攻克异构字典类型推断陷阱（TypedDict）：解决在 `headings` 列表中因混合存放 `int` 与 `str` 导致 `mypy` 推断为 `dict[str, object]` 并报出 10 条运算/切片类型不兼容的报错；通过引入标准 `TypedDict`（`HeadingInfo`）保持业务逻辑零变动的同时，实现 `mypy src eval` 零告警清零（14 个源文件）。
+
+### 二、今日有价值提问清单（复习索引）
+1. `tokens = self.md.parse(content)` 解析返回的 Token 流具体包含什么？为什么解析器会把标题拆分成 `heading_open`、`inline`、`heading_close` 三个节点？
+2. `enumerate(tokens)` 的目的是什么？为什么只判断 `type == "heading_open" and t.map:`？`t.tag[1:]` 与 `t.map` 的 `[start, end]` 行号映射机制是什么？
+3. `CodeChunk` 的 `tokens` 字段有什么意义？为什么要在 `tokens` 中把 `title_path` 扩展进去？（文档语义孤儿与面包屑特征无污染注入）
+4. 文档在第一个标题之前的前置引言（Prelude）文本是如何通过切片提取的？行号是如何与后续章节严丝合缝闭合的？
+5. 遍历切块中是如何用标题层级栈（Stack）维护树形祖先路径并实现同级/高级弹栈的？什么是纯父级容器标题？为什么对它跳过切块而只保留面包屑？
+6. 在 Python 静态类型系统中，为什么将包含 `int` 和 `str` 的无标注字典放入列表会导致 mypy 报错 `Unsupported operand types for < ("int" and "object")`？`TypedDict` 是如何解决这个问题的？
+
+---
+
 ## 2026-11-03 (Day 18 · W5 W 评测大盘回归、消融实验与 ADR-001 决策闭环)
 
 ### 一、今日完成事项

@@ -88,6 +88,21 @@
 
 ---
 
+### 8. 技术文档层级切块中的“纯父级容器空切块”与“文档语义孤儿”避坑
+* **遇到的问题**：
+  在实现 Markdown 技术文档切块时，遇到两大致命缺陷：
+  - **空切块与 Top-K 预算浪费**：当父标题（如 `## 最重要的三条`）下未写任何正文直接紧跟子标题（`### 1. 为什么不上向量库`）时，机械切片会为父标题单独生成一个只有 1 行文字的空切块，白白浪费检索槽位；
+  - **文档语义孤儿**：深层子标题切块的正文中往往仅陈述具体决策细节，未重复提及其上级分类名或文件名（如 ADR-001），用户进行宏观限定提问时因字面缺失关键词而无法召回。
+* **坑在哪里**：
+  - Markdown 语法是天然嵌套的树形拓扑结构，简单的顺序线性切分破坏了上下文拓扑关系；
+  - 检索词袋（BM25 `tokens`）若仅提取段落正文字面，深层小节无法继承祖先节点的语义权重。
+* **解决与梳理**：
+  - **纯容器标题即时识别与跳过**：当检测到当前标题与紧邻的下一个标题之间没有实质正文且下个标题级别更深（`next_level > current_level and not body_text`）时，判定其为纯结构容器——**跳过独立切块生成**；
+  - **标题层级栈与面包屑生成**：使用栈（Stack）在遇到同级或更高级标题时动态出栈，拼接生成完整的 `title_path`（如 `ADR-001 · 技术选型 > 最重要的三条 · 初答 > 1. 为什么阶段 1-2 不上向量库`）；
+  - **检索特征无污染注入（Tokens Enrichment）**：将 `title_path` 的关键词通过 `chunk_tokens.extend(tokenize_code(title_path))` 注入倒排检索词袋。使物理正文 `content` 保持真实纯净且行号完全闭合的同时，使检索层天然具备祖先全局命名空间的命中能力。
+
+---
+
 ## 二、评测执行器与判卷逻辑避坑
 
 ### 1. 评测定位黑盒问题（看不清切片证据）
@@ -269,6 +284,26 @@
   - 若无静态类型拦截，Python 解释器能正常执行不会报 SyntaxError，但在下游 `for c in chunks: c.tokens` 时会爆发远程 `AttributeError: 'list' object has no attribute 'tokens'`。
 * **解决与梳理**：
   子列表合并至主列表时严格使用 `chunks.extend(...)` 展开迭代器；静态类型系统能在运行期执行前彻底掐死容器结构错位的隐患。
+
+---
+
+### 7. 结构化异构字典的类型推断降级与 TypedDict 约束
+* **遇到的问题**：
+  在收集 Markdown 标题信息时，将包含 `level: int`、`title: str`、`start_0: int` 的字典存入 `headings = []` 列表中。后续在提取行号或切片时（如 `lines[:first_h_start]`、`start_0 + 1`），`mypy` 集中抛出 10 条 `Unsupported operand types for + ("object" and "int")` 以及 `Invalid index type` 静态错误。
+* **坑在哪里**：
+  - 声明 `headings = []` 未赋予泛型类型参数，mypy 在分析 `headings.append({...})` 时，由于字典中同时存在 `int` 和 `str`，在 Python 单一继承树中自动将其向上收敛泛化为最近公共祖先 **`object`**（即 `list[dict[str, object]]`）；
+  - 在静态类型系统中，基类 `object` 不保证具备数值运算（`+`、`<`）或切片索引（`slice`）能力，从而引发全面报错。
+* **解决与梳理**：
+  - 引入 Python 标准库 `typing.TypedDict` 定义结构化字典强类型：
+    ```python
+    class HeadingInfo(TypedDict):
+        level: int
+        title: str
+        start_0: int
+        h_end_0: int
+    ```
+  - 将声明显式标注为 `headings: List[HeadingInfo] = []`；
+  - **收益**：既保留了字典轻量存取的语法灵活性，无需修改下游任何 `h["start_0"]` 业务代码，又让静态类型检查器清晰获知各个字段的具体数值类型，彻底消除 `object` 降级告警。
 
 ---
 

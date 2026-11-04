@@ -1,6 +1,7 @@
 from dataclasses import  dataclass
 from pathlib import  Path
 import re
+from typing import Literal
 
 from rank_bm25 import BM25Okapi
 
@@ -12,6 +13,8 @@ class CodeChunk:
     content:str
     tokens:list[str]
     symbol_name: str = ""
+    source_type: Literal["code","doc"] = "code"
+    title_path: str = ""
 
 
 def tokenize_code(text:str) ->list[str]:
