@@ -19,11 +19,24 @@ class CodeChunk:
 
 def tokenize_code(text:str) ->list[str]:
     """
-    将代码文本拆分为小写单词列表，支持驼峰和下划线拆分
+       将代码或文档文本拆分为中英文混合 token 列表。
+       - 英文与标识符：支持驼峰和下划线拆分，提取长度 > 1 的小写单词
+       - 中文文本：提取单字 (1-gram) 与相邻双字 (2-gram)，实现零依赖的高精度 CJK 倒排索引
     """
     spaced_camel = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
     words = re.findall(r'[a-zA-Z0-9]+', spaced_camel)
     tokens = [w.lower() for w in words if len(w) > 1]  # 过滤单字符无意义符号
+
+    #提取中文字符串并构建 1-gram和2-gram
+    chinese_segments = re.findall(r'[\u4e00-\u9fff]+', text)
+    for seg in chinese_segments:
+        # 1-gram (单字)
+        for char in seg:
+            tokens.append(char)
+        # 2-gram (双字切分，增强短语紧邻权重)
+        for i in range(len(seg) - 1):
+            tokens.append(seg[i:i+2])
+
     return tokens
 
 def chunk_file(file_path:Path,chunk_size:int = 60,overlap: int = 20)->list[CodeChunk]:

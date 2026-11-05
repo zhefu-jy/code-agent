@@ -1,5 +1,7 @@
 from pathlib import Path
 import pytest
+
+from code_agent.index.bm25_index import CodeChunk
 from code_agent.index.vector_index import VectorCodeIndex
 
 
@@ -52,3 +54,51 @@ def test_vector_index_empty_cases(tmp_path: Path) -> None:
     # 针对空文本搜索
     assert indexer.search("", top_k=3) == []
     assert indexer.search("   ", top_k=3) == []
+
+
+def test_vector_index_build_from_chunks_multi_source() -> None:
+    """测试 VectorCodeIndex 接收代码与文档多源切块并完整还原元数据标签（契约测试）"""
+    # 纯净代码块：无人工修饰的注释
+    code_chunk = CodeChunk(
+        file_path="src/auth.py",
+        start_line=10,
+        end_line=25,
+        content="def verify_jwt_token(token: str) -> bool:\n    return token.startswith('bearer_')",
+        tokens=["def", "verify", "jwt", "token"],
+        symbol_name="verify_jwt_token",
+        source_type="code",
+    )
+    # 纯净文档块：技术决策描述
+    doc_chunk = CodeChunk(
+        file_path="docs/ADR-002.md",
+        start_line=1,
+        end_line=18,
+        content="本项目采用 JWT Bearer Token 作为分布式微服务统一鉴权凭据与方案选型。",
+        tokens=["jwt", "token", "鉴", "权"],
+        source_type="doc",
+        title_path="架构选型 > 鉴权方案",
+    )
+
+    indexer = VectorCodeIndex(collection_name="test_multi_source_collection")
+    total = indexer.build_from_chunks([code_chunk, doc_chunk])
+    assert total == 2
+
+    # 1. 验证文档召回与元数据完整性
+    res_doc = indexer.search("微服务统一鉴权方案与架构选型", top_k=1)
+    assert len(res_doc) == 1
+    hit_doc, score_doc = res_doc[0]
+    assert score_doc > 0.0
+    assert hit_doc.file_path == "docs/ADR-002.md"
+    assert hit_doc.source_type == "doc"
+    assert hit_doc.title_path == "架构选型 > 鉴权方案"
+    assert hit_doc.symbol_name == ""
+
+    # 2. 验证代码符号召回与元数据完整性
+    res_code = indexer.search("verify_jwt_token", top_k=1)
+    assert len(res_code) == 1
+    hit_code, score_code = res_code[0]
+    assert score_code > 0.0
+    assert hit_code.file_path == "src/auth.py"
+    assert hit_code.source_type == "code"
+    assert hit_code.symbol_name == "verify_jwt_token"
+    assert hit_code.title_path == ""
