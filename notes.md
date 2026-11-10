@@ -439,3 +439,19 @@
   - **编译器符号表（LSP / Tree-sitter）**：分析代码调用拓扑（Call Graph）；
   - **双路加权混合打分（Hybrid + RRF）**：抹平量纲，互补词法与语义；
   - **阶段四 ReAct 自主探查 Agent**：大模型主动调用 `grep`、`read_file` 查证，而非被动单次 RAG 猜代码。
+
+---
+
+### 3. 多源混合检索调度整合、小类切块内聚与 Python 元组语法陷阱
+* **遇到的问题**：
+  1. 在升级 `HybridRetriever.build_from_sources` 时，参数类型标注为 `Tuple[str, ...]` 但默认值书写为 `(".py")`，导致 `mypy` 报出类型不兼容报错 `Incompatible default for parameter "code_extensions" (default has type "str", parameter has type "tuple[str, ...]")`；
+  2. 在编写双源检索单元测试时，断言 4 行的小类方法 `c_hit.chunk.symbol_name == "TokenAuthenticator.verify_jwt_token"` 失败，实际断言值为类名 `"TokenAuthenticator"`；
+  3. 在 Windows 原生终端（CMD/PowerShell）运行 CLI 打印带 Emoji（`🚀`、`💻`、`📄`）的结果卡片时，极易因终端代码页触发 `UnicodeEncodeError: 'gbk' codec can't encode character`。
+* **坑在哪里**：
+  1. **Python 括号语法运算符歧义**：括号在 Python 中优先充当表达式求值优先级符号。`("abc")` 会直接求值为 `str`；必须加尾随逗号 `("abc",)` 才能触发元组构造器（`tuple`）；
+  2. **AST 切块的小类抗碎片化机制**：`ASTChunker` 具有 `max_class_lines = 50` 策略。不足 50 行的内聚小类不会被强行拆解成类头与分散的方法，而是整体保留作为一个语义块，符号名保留为类名 `node.name`。测试断言必须忠实对齐切块器的物理契约，而非凭空臆想细粒度方法名；
+  3. **Windows 历史终端代码页与 UTF-8 鸿沟**：Windows 中文环境终端默认使用 CP936 (GBK) 编码，原生无法打印 4 字节的 Unicode Emoji，导致脚本在 Linux 正常却在 Windows 偶发炸裂。
+* **解决与梳理**：
+  - **元组规范化**：单元素元组强制尾随逗号：`code_extensions: Tuple[str, ...] = (".py",)`；
+  - **契约断言对齐**：对于小类测试块，断言 `symbol_name == "TokenAuthenticator"`，同时断言方法名存在于 `content` 中；
+  - **跨平台控制台 UTF-8 守护**：在 CLI 入口处判断并执行 `sys.stdout.reconfigure(encoding="utf-8")` 与 `sys.stderr.reconfigure(encoding="utf-8")`，抹平终端字符集差异。

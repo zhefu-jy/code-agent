@@ -93,14 +93,23 @@ def handle_review(raw_arg: str) -> None:
 def main() -> None:
     # 初始化双路混合检索器（alpha=0.5 词法语义均衡）
     retriever = HybridRetriever(alpha=0.5)
-    chunk_count = retriever.build_from_directory(Path(src_dir))
-    print("=" * 60)
-    print(f"🚀 Code-Agent 已启动！(已构建 AST 混合检索双路索引，共 {chunk_count} 个语义切块)")
+    chunk_count = retriever.build_from_sources(
+        code_dir=REPO_ROOT/"src",
+        doc_dir=REPO_ROOT/"docs", )
+
+    code_count = sum(1 for c in retriever.chunks if c.source_type == "code")
+    doc_count = sum(1 for c in retriever.chunks if c.source_type == "doc")
+
+    print("=" * 64)
+    print(
+        f"🚀 Code-Agent 已启动！(双源混合检索就绪: 共 {chunk_count} 个切块 | "
+        f"💻 源码: {code_count} | 📄 文档: {doc_count})"
+    )
     print("  - 普通对话：直接输入问题与模型对话")
     print("  - 检索代码：输入 /search <关键词/语义意图> (例如: /search stream ask)")
     print("  - 审查文件：输入 /review <文件路径> (例如: /review src/code_agent/cli.py)")
     print("  - 退出程序：输入 exit")
-    print("=" * 60 + "\n")
+    print("=" * 64 + "\n")
 
     messages: list[BaseMessage] = [SystemMessage(content="你是一个专业的代码工程助手，回答简洁专业。")]
     while True:
@@ -128,16 +137,25 @@ def main() -> None:
                         "VECTOR": "🧠 [语义向量命中]",
                         "BM25": "🔤 [词法关键词命中]",
                     }
-                    tag = tag_map.get(hit.source, hit.source)
+                    hit_tag = tag_map.get(hit.source, hit.source)
                     display_file = to_repo_relative(Path(hit.chunk.file_path), base_dir=REPO_ROOT)
+
+                    if hit.chunk.source_type == "code":
+                       source_tag = "💻 [源代码]"
+                       meta_info = f"符号: {hit.chunk.symbol_name}" if hit.chunk.symbol_name else "代码片段"
+                    else:
+                       source_tag = "📄 [规范文档]"
+                       meta_info = f"章节: {hit.chunk.title_path}" if hit.chunk.title_path else "文档片段"
+
                     print(
-                        f"【TOP {rank}】{tag} 融合分: {hit.score:.4f} "
-                        f"(BM25归一: {hit.bm25_norm_score:.2f} | 向量归一: {hit.vec_norm_score:.2f}) "
-                        f"| {display_file} (第 {hit.chunk.start_line}~{hit.chunk.end_line} 行)"
+                     f"【TOP {rank}】{source_tag} {hit_tag} 融合分: {hit.score:.4f} "
+                     f"(BM25: {hit.bm25_norm_score:.2f} | 向量: {hit.vec_norm_score:.2f})"
                     )
-                    print("-" * 60)
+                    print(f"        🏷️  {meta_info}")
+                    print(f"        📁 {display_file} (第 {hit.chunk.start_line}~{hit.chunk.end_line} 行)")
+                    print("-" * 64)
                     print(hit.chunk.content)
-                    print("-" * 60 + "\n")
+                    print("-" * 64 + "\n")
             continue
 
 

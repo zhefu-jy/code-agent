@@ -4,6 +4,8 @@ from typing import Dict, List, Literal, Optional, Tuple
 from rank_bm25 import BM25Okapi
 from code_agent.index.bm25_index import BM25CodeIndex, CodeChunk
 from code_agent.index.vector_index import VectorCodeIndex
+from code_agent.index.ast_chunker import ASTChunker
+from code_agent.index.markdown_chunker import MarkdownDocChunker
 SourceType = Literal["BM25", "VECTOR", "BOTH"]
 
 
@@ -74,29 +76,86 @@ class HybridRetriever:
         self.vector_index = vector_index or VectorCodeIndex()
         # 严格限制权重在 [0.0, 1.0] 合法区间
         self.alpha = max(0.0, min(1.0, alpha))
+        self.chunks: List[CodeChunk] = []
+
+
+    def build_from_chunks(self,chunks: List[CodeChunk])-> int:
+        """
+        直接加载预先切好的多源语义切块（代码 AST 块与 Markdown 文档块）。
+        保证 BM25 与向量库底层共享完全相同的切块实体与元数据契约。
+        """
+        self.chunks = list(chunks)
+        # 1. 写入向量库底座
+        self.vector_index.build_from_chunks(self.chunks,clear_existing=True)
+        # 2.同步写入BM25倒排索引
+        self.bm25_index.build_from_chunks(self.chunks)
+        return len(self.chunks)
+
+
+    def build_from_sources(
+            self,
+            code_dir: Optional[str|Path]=None,
+            doc_dir: Optional[str|Path]=None,
+            code_extensions: Tuple[str,...] = (".py",)
+                          )->int:
+        """
+        跨源统一构建：分别对代码与文档应用专业切块器，汇流后联合构建双路索引。
+        - code_dir: Python 代码目录（使用 ASTChunker 解析类与函数）
+        - doc_dir: Markdown 文档目录（使用 MarkdownDocChunker 解析标题树与面包屑）
+        """
+        ignore_dirs = {
+            ".git",
+            ".idea",
+            "__pycache__",
+            ".venv",
+            "venv",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".workbuddy",
+        }
+        all_chunks: List[CodeChunk] = []
+        #1.扫描与切分代码源
+        if code_dir:
+            code_path = Path(code_dir)
+            if code_path.exists():
+                code_chunker = ASTChunker()
+                for p in code_path.rglob("*"):
+                    if any(part in ignore_dirs for part in p.parts):
+                        continue
+                    if p.is_file() and p.suffix.lower() in code_extensions:
+                        all_chunks.extend(code_chunker.chunk_file(p))
+
+        # 2. 扫描与切分技术文档源
+        if doc_dir:
+            doc_path = Path(doc_dir)
+            if doc_path.exists():
+                doc_chunker = MarkdownDocChunker()
+                for p in doc_path.rglob("*.md"):
+                    if any(part in ignore_dirs for part in p.parts):
+                        continue
+                    if p.is_file():
+                        all_chunks.extend(doc_chunker.chunk_file(p))
+
+        return self.build_from_chunks(all_chunks)
+
+
+
 
     def build_from_directory(
             self,
             root_dir: str | Path,
             extensions: Tuple[str, ...] = (".py",),
+            doc_dir: Optional[str | Path] = None,
     ) -> int:
         """
         扫描目录并构建双路索引。
-        先由向量索引器生成 AST 切块入库，再把完全一致的切块语料同步给 BM25。
+         向后兼容既有单目录接口，同时支持传入 doc_dir 实现一键双源联合索引构建。
         """
-        # 1. 向量索引器生成 AST 语法切块并存入本地 ChromaDB
-        count = self.vector_index.build_from_directory(root_dir,extensions)
-
-        # 2. 将同一份 AST chunks 同步喂给 BM25
-        if hasattr(self.bm25_index,"build_from_chunks"):
-            self.bm25_index.build_from_chunks(self.vector_index.chunks)
-        else:
-            self.bm25_index.chunks = list(self.vector_index.chunks)
-            if self.bm25_index.chunks:
-                corpus = [c.tokens for c in self.bm25_index.chunks]
-                self.bm25_index.bm25 = BM25Okapi(corpus)
-
-        return count
+        return self.build_from_sources(
+            code_dir=root_dir,
+            doc_dir=doc_dir,
+            code_extensions=extensions,
+        )
 
 
     def search(

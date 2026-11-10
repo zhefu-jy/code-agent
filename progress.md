@@ -2,6 +2,24 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-10 (Day 21 · W6 S3 双源混合检索与 CLI 跨源透视升级)
+
+### 一、今日完成事项
+1. 混合检索器双源调度整合：在 `src/code_agent/index/hybrid_retriever.py` 中重构并扩展 `HybridRetriever`，新增底层原子灌库接口 `build_from_chunks`，新增多源自动调度接口 `build_from_sources`（分别调度 `ASTChunker` 提取代码类与函数符号，以及 `MarkdownDocChunker` 提取文档树形面包屑），并在 `build_from_directory` 中平滑支持 `doc_dir` 可选参数，保持既有单测与评测执行器 100% 向前兼容。
+2. 攻克 Python 单元素元组语法陷阱：排查并修复 `code_extensions: Tuple[str, ...] = (".py")` 丢失逗号导致 mypy 报错的类型隐患（`str` vs `tuple`），保持静态类型严格清零。
+3. 自动化双源单元测试全量通过：在 `tests/test_hybrid_retriever.py` 中新增 `test_hybrid_retriever_dual_sources`，验证代码与 Markdown 双源联合扫描、多态契约还原（`source_type` / `symbol_name` / `title_path`）与双路打分；深刻印证并巩固了 `ASTChunker` 中对于小于 50 行小类保持整体内聚的符号归一设计；全量 30 个 pytest 单测 100% 全绿通过（2.98s）。
+4. CLI 跨源透视与卡片交互落地：升级 `src/code_agent/cli.py`，启动时联合扫描 `src/` 与 `docs/` 并输出细分切块统计（138 个切块：62 源码 + 76 文档）；重塑 `/search` 命令输出视图，以 `💻 [源代码]` vs `📄 [规范文档]`、命中类型标签（`🔀 [双路命中]` / `🧠 [语义命中]` / `🔤 [词法命中]`）、细分打分、符号/章节标识及物理行号卡片完整透视检索结果。
+5. 端到端实机真实意图验证：实跑 CLI 验证代码意图（`/search stream_ask` 双路 1.0 满分锁定 `model.py` 第 24~47 行）与架构决策意图（`/search 阶段1-2不上向量库的原因` 词法穿透锁定 `ADR-001` 第 38~49 行），成功打通“代码事实”与“设计规约”的双源协同；`mypy src eval` 零告警通过（14 个源文件）。
+
+### 二、今日有价值提问清单（复习索引）
+1. 混合检索器 `HybridRetriever` 为什么不能直接让向量库单独扫描目录，而必须抽象出多源汇流调度？
+2. 在 Python 中，为什么 `(".py")` 会被识别为 `str` 而非 `tuple`？单元素元组为什么必须强制加尾随逗号？
+3. 在针对双源混合检索编写单测时，为什么包含 4 行方法的小类切块，其 `symbol_name` 断言为类名而非方法名？`ASTChunker` 的小类内聚设计初衷是什么？
+4. CLI 跨源透视升级如何实现“代码事实（事实本身）”与“设计规约（权威依据与约束来自哪）”在终端的视觉化解耦与协同？
+5. 在 Windows 控制台下打印 Emoji 和多源标签时，为什么容易触发 `UnicodeEncodeError`（GBK 代码页限制）？如何通过标准流重定向进行工程级防御？
+
+---
+
 ## 2026-11-05 (Day 20 · W6 S2 双源索引构建与中英文混合分词打通)
 
 ### 一、今日完成事项
