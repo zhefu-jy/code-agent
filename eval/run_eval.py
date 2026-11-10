@@ -1,8 +1,10 @@
 import sys
 import time
 import json
+import hashlib
 from pathlib import Path
 from dataclasses import dataclass, field
+from typing import Any
 import yaml
 import argparse
 from code_agent.core.context import build_snippets_text
@@ -129,15 +131,15 @@ def evaluate_single_case(
 
     snippets_text = build_snippets_text(hits, base_dir=base_dir)
 
-    # 2. 组装 Prompt 并调用大模型
+    # 2. 组装 Prompt 并调用大模型（Stage 2）
     system_prompt = (
-        "你是一个严谨的代码工程助手。\n"
+        "你是一个严谨的代码工程与技术规范助手。\n"
         f"{CITATION_PROMPT_REQUIREMENT}"
     )
     user_prompt = (
-        f"【参考代码片段】:\n{snippets_text}\n\n"
+        f"【参考上下文片段（包含源码与技术文档）】:\n{snippets_text}\n\n"
         f"【用户问题】: {case.question}\n"
-        "请根据参考代码回答，并严格标注每一处出处引用。"
+        "请根据参考资料回答，并严格标注每一处出处引用。"
     )
     full_prompt = (
         f"=== [System Message] ===\n{system_prompt}\n\n"
@@ -350,7 +352,8 @@ def run_eval(cases_dir: Path,
     # 1. 构建 BM25 本地索引
     root_path = Path(__file__).resolve().parent.parent
     src_path = root_path / "src"
-    print(f"📦 正在扫描并构建索引 [{retriever_type.upper()}]: {src_path} ...")
+    docs_path = root_path / "docs"
+    print(f"📦 正在扫描并构建索引 [{retriever_type.upper()}]: src={src_path}, docs={docs_path} ...")
 
     indexer: BM25CodeIndex | VectorCodeIndex | HybridRetriever
     if retriever_type == "bm25":
@@ -361,10 +364,10 @@ def run_eval(cases_dir: Path,
         total_chunks = indexer.build_from_directory(src_path)
     elif retriever_type == "hybrid":
         indexer = HybridRetriever(alpha=0.5)
-        total_chunks = indexer.build_from_directory(src_path)
+        total_chunks = indexer.build_from_sources(code_dir=src_path, doc_dir=docs_path)
     else:
         raise ValueError(f"不支持的检索策略: {retriever_type}")
-    print(f"✅ 索引构建完成，总代码切块数: {total_chunks}")
+    print(f"✅ 索引构建完成，总切块数: {total_chunks}")
 
     # 2. 初始化大模型（使用 temperature=0.0 保证评测确定性）
     model = get_chat_model(temperature=0.0)

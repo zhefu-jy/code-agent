@@ -1,0 +1,9 @@
+id: "030"
+type: "boundary"
+question: "项目中关于引入 Redis 集群进行分布式锁与缓存选型的 ADR-004 决策记录在哪个文件第几行？"
+expected_files: []
+expected_symbols: []
+is_unanswerable: true
+intent: "考察模型对虚构的架构决策记录 ADR-004 与分布式缓存方案的严谨拒答，必须显式输出无依据"
+source: "real"
+note: "W6 W 新增虚构架构文档防御用例"

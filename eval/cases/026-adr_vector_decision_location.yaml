@@ -1,0 +1,11 @@
+id: "026"
+type: "location"
+question: "项目中记录为什么阶段 1-2 不上向量库以及 W5 混合检索修订结论的 ADR 技术选型文档在哪个文件、第几行？"
+expected_files:
+  - "docs/ADR-001-技术选型.md"
+expected_symbols:
+  - "不上向量库"
+is_unanswerable: false
+intent: "考察模型对 ADR-001 架构决策演进及实测修订结论章节的物理定位能力"
+source: "real"
+note: "W6 W 新增跨源评测用例：验证技术选型决策记录的精准召回与行号引用"

@@ -1,0 +1,11 @@
+id: "028"
+type: "behavior"
+question: "在方案文档的 Agent 工程能力地图中，为什么说 Agent 工程师与会调 API 的人的分界线画在第三层（状态层）？"
+expected_files:
+  - "docs/方案.md"
+expected_symbols:
+  - "状态层"
+is_unanswerable: false
+intent: "考察模型对项目方案规划中核心能力分层观点与技术分水岭的理解定位能力"
+source: "real"
+note: "W6 W 新增跨源评测用例：验证方案设计文档的核心理念抽取"

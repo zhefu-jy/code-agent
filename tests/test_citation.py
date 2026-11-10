@@ -161,5 +161,34 @@ def test_validate_citations_batch():
     assert results[1].is_valid is False
     assert results[1].status == CitationStatus.FILE_NOT_FOUND
 
+def test_extract_unicode_and_doc_citations():
+    """验证含有中文字符与 Markdown 规范文档的引用提取能力"""
+    text = (
+        "根据技术选型决策清单 [docs/ADR-001-技术选型.md:38-49]，"
+        "阶段 1-2 采用纯关键词检索，并且在反引号中记载了 [`docs/方案.md:15-30`]。"
+    )
+    citations = extract_citations(text)
+    assert len(citations) == 2
+    assert citations[0].file_path == "docs/ADR-001-技术选型.md"
+    assert citations[0].start_line == 38
+    assert citations[0].end_line == 49
+    assert citations[1].file_path == "docs/方案.md"
+    assert citations[1].start_line == 15
+    assert citations[1].end_line == 30
+
+
+def test_validate_doc_citation_valid():
+    """验证真实存在的 Markdown 文档及物理行号校验通过"""
+    citation = Citation(
+        file_path="docs/ADR-001-技术选型.md",
+        start_line=38,
+        end_line=49,
+        raw_text="[docs/ADR-001-技术选型.md:38-49]",
+    )
+    res = validate_citation(citation)
+    assert res.is_valid is True
+    assert res.status == CitationStatus.VALID
+    assert res.total_lines is not None and res.total_lines > 0
+
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
