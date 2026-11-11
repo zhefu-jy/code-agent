@@ -89,8 +89,65 @@ _NO_EVIDENCE_PATTERN = re.compile(
 
 
 def has_no_evidence(text: str) -> bool:
-  """检测回答是否明确声明了无依据（拒答判定）"""
-  return bool(_NO_EVIDENCE_PATTERN.search(text))
+    """检测回答是否包含无依据或拒答表述"""
+    return bool(_NO_EVIDENCE_PATTERN.search(text))
+
+
+_FULL_REFUSAL_LEAD_PATTERN = re.compile(
+    r"^\s*(?:根据(?:所)?提供的?参考资料[，,]\s*)?"
+    r"[\*_`\s]*(?:无依据|无法确定|无法回答|无法给出|无法作答|未找到|不存在|无法从)"
+)
+
+# 首句"我答不了这个问题"的另一种常见写法：把否定动词和疑问焦点分开
+# 例如「参考资料中未给出该常量的具体内容，因此无法确定默认排除了哪些具体目录。」
+_FULL_REFUSAL_UNANSWERED_PATTERN = re.compile(
+    r"(?:无法|不能|未能|没有|未)[^。！？\n]{0,15}"
+    r"(?:确定|给出|提供|说明|找到)[^。！？\n]{0,30}"
+    r"(?:哪些|什么|哪几|哪个|多少)"
+)
+
+
+def is_full_refusal(text: str) -> bool:
+    """
+    判断回答是否为主干/全局拒答（而非回答正文中的局部免责说明）。
+
+    判据（任一命中即视为全局拒答）：
+    1. 首句以拒答措辞开头（允许“根据提供的参考资料，”前缀与 ** / ` 等 Markdown 包装）；
+    2. 首句整体就是一句拒答（如“关于 X：无依据。”）；
+    3. 末尾结论句明确全盘否定（以“结论：/综上：/总结：”开头且含拒答词）。
+
+    重要：**空回答不算拒答**。空回答属于“没作答”，必须由调用方单独判定；
+    否则边界拒答题会因为一次模型空返回而被误判为“已拒答 → 通过”。
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if not lines:
+        return False
+
+    # 去掉行首的 Markdown 标记后再做前缀判定，避免 “**无法确定**” 这种加粗把前缀匹配打穿
+    first_line = lines[0].lstrip("*_`#>[] 【】").strip()
+    if _FULL_REFUSAL_LEAD_PATTERN.match(first_line):
+        return True
+
+    # 首段就明确说"答不了这个问题"，即使用词不是"无依据"
+    if _FULL_REFUSAL_UNANSWERED_PATTERN.search(first_line):
+        return True
+
+    if re.search(
+        r"^(关于.*)?(无依据|无法确定.*(位置|文件|代码|内容|关键词|定义)|无法得出该问题的答案|无法作答)[。.!！]?$",
+        first_line,
+    ):
+        return True
+
+    for line in lines[-3:]:
+        clean_line = line.strip("*# ")
+        if clean_line.startswith(("结论：", "综上：", "总结：")):
+            if "无依据" in clean_line or "无法确定" in clean_line or "未提供" in clean_line:
+                return True
+
+    return False
 
 
 def _resolve_file_path(file_path:str,base_dir:Path | str | None = None) ->Path:

@@ -28,12 +28,8 @@ from code_agent.core.model import get_chat_model
 from code_agent.index.bm25_index import BM25CodeIndex, CodeChunk
 from code_agent.index.vector_index import VectorCodeIndex
 from code_agent.index.hybrid_retriever import HybridRetriever, HybridSearchResult
-from code_agent.core.citation import (
-    CITATION_PROMPT_REQUIREMENT,
-    extract_citations,
-    validate_citations,
-    has_no_evidence,
-)
+from code_agent.core.citation import CITATION_PROMPT_REQUIREMENT
+from code_agent.core.judge import CaseSpec, MatchMode, Verdict, judge_answer
 
 @dataclass
 class EvalCase:
@@ -44,9 +40,23 @@ class EvalCase:
     expected_files: list[str] = field(default_factory=list)
     expected_symbols: list[str] = field(default_factory=list)
     is_unanswerable: bool = False
+    allow_partial_refusal: bool = False
+    match_mode: str = "any"
     intent: str = ""
     source: str = ""
     note: str = ""
+
+    def to_spec(self) -> CaseSpec:
+        """转换为判卷内核所需的不可变用例规格"""
+        mode: MatchMode = "all" if self.match_mode == "all" else "any"
+        return CaseSpec(
+            id=self.id,
+            expected_files=tuple(self.expected_files),
+            expected_symbols=tuple(self.expected_symbols),
+            is_unanswerable=self.is_unanswerable,
+            allow_partial_refusal=self.allow_partial_refusal,
+            match_mode=mode,
+        )
 
 @dataclass
 class CaseResult:
@@ -55,7 +65,8 @@ class CaseResult:
     answer: str
     latency: float #单题耗时
     is_completed: bool  # 模型是否成功回答且未报错
-    has_no_evidence_declared: bool  # 是否声明了无依据
+    has_no_evidence_declared: bool  # 是否声明了无依据（局部免责也算，仅作展示）
+    refusal: str  # none / scoped（局部免责）/ global（全局拒答）
     citations_count: int  # 提取到的引用总数
     valid_citations_count: int  # 经物理文件校验合法的引用数
     retrieval_file_hit: bool #检索阶段：BM25 Top-K 切块中是否召回了期望文件
@@ -77,14 +88,17 @@ def load_cases(cases_dir:Path) -> list[EvalCase]:
     for file_path in yaml_files:
         with open(file_path, "r", encoding="utf-8") as f:
           data = yaml.safe_load(f)
+          case_id = str(data.get("id", file_path.stem))
           cases.append(
               EvalCase(
-                  id=str(data.get("id",file_path.stem)),
-                  type = data.get("type","location"),
+                  id=case_id,
+                  type=data.get("type", "location"),
                   question=data.get("question", ""),
                   expected_files=data.get("expected_files") or [],
                   expected_symbols=data.get("expected_symbols") or [],
                   is_unanswerable=data.get("is_unanswerable", False),
+                  allow_partial_refusal=bool(data.get("allow_partial_refusal", False)),
+                  match_mode=str(data.get("match_mode", "any")),
                   intent=data.get("intent", ""),
                   source=data.get("source", ""),
                   note=data.get("note", ""),
@@ -103,7 +117,7 @@ def evaluate_single_case(
 )-> CaseResult:
     """执行单个用例的全链路评测与客观判卷"""
     start_time = time.time()
-    fail_reasons = []
+    fail_reasons: list[str] = []
 
     # 1. BM25 检索相关代码片段
     raw_results = indexer.search(case.question, top_k=top_k)
@@ -167,82 +181,30 @@ def evaluate_single_case(
         fail_reasons.append("模型调用异常")
 
     latency = time.time() - start_time
-    # 3. 引用解析与物理校验
-    no_evidence_declared = has_no_evidence(answer)
-    citations = extract_citations(answer)
-    validation_results = validate_citations(citations, base_dir=base_dir)
-    valid_citations = [r for r in validation_results if r.is_valid]
-    citations_count = len(citations)
-    valid_citations_count = len(valid_citations)
 
-    # 4. 判定文件命中与符号命中
-    file_hit = False
-    symbol_hit = False
+    # 3. 分段判卷（纯函数内核，见 code_agent/core/judge.py；可离线复跑，不依赖本文件的检索链路）
+    verdict: Verdict = judge_answer(case.to_spec(), answer, base_dir=base_dir)
 
-    if case.expected_files:
-        # 检查提取到的合法引用中是否命中了期望文件
-        cited_files = {c.file_path.replace("\\", "/") for c in citations}
-        for exp_f in case.expected_files:
-            clean_exp = exp_f.replace("\\", "/")
-            if any(clean_exp in cf or cf in clean_exp for cf in cited_files):
-                file_hit = True
-                break
-    else:
-        file_hit = True  # 未指定期望文件时默认不扣分
-
-    if case.expected_symbols:
-      missing_symbols = [
-          sym for sym in case.expected_symbols
-          if sym.lower() not in answer.lower()
-      ]
-      if missing_symbols:
-          symbol_hit = False
-          fail_reasons.append(f"未命中期望关键符号: {missing_symbols}")
-      else:
-          symbol_hit = True
-
-    # 5. 综合通关判决（Pass / Fail）
-    is_passed = False
-    if case.is_unanswerable:
-        # 边界拒答题判卷标准：必须明确声明无依据，且不能编造合法引用
-        if no_evidence_declared:
-            is_passed = True
-        else:
-            fail_reasons.append("虚构问题未能成功拒答（未声明“无依据”）")
-    else:
-        # 正常题判卷标准：
-        if not is_completed:
-            fail_reasons.append("回答未完成或报错")
-        #优化：如果已经命中了期望文件和关键符号且有合法引用，不属于整体拒答
-        elif no_evidence_declared and case.id != "019" and not (file_hit and
-                                                                symbol_hit and valid_citations_count >= 1):
-            fail_reasons.append("真实功能被模型判定为“无依据”（检索未召回关键代码片段）")
-        elif citations_count == 0:
-            fail_reasons.append("未标注任何引用出处")
-        elif valid_citations_count == 0:
-            fail_reasons.append("所有引用的行号均物理校验失败（存在行号漂移或假文件）")
-        elif not file_hit:
-            fail_reasons.append(f"未命中期望文件 {case.expected_files}")
-        elif not symbol_hit:
-            fail_reasons.append(f"未命中期望关键符号 {case.expected_symbols}")
-        else:
-            is_passed = True
+    fail_reasons.extend(verdict.fail_reasons)
+    if not is_completed and "回答未完成" not in " ".join(fail_reasons):
+        fail_reasons.insert(0, "模型调用异常")
 
     return CaseResult(
         case=case,
         answer=answer,
         latency=latency,
         is_completed=is_completed,
-        has_no_evidence_declared=no_evidence_declared,
-        citations_count=citations_count,
-        valid_citations_count=valid_citations_count,
+        has_no_evidence_declared=verdict.refusal != "none",
+        refusal=verdict.refusal,
+        citations_count=verdict.citations_total,
+        valid_citations_count=verdict.citations_valid,
         retrieval_file_hit=retrieval_file_hit,
-        file_hit=file_hit,
-        symbol_hit=symbol_hit,
+        file_hit=verdict.file_hit,
+        symbol_hit=verdict.symbol_hit,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
-        is_passed=is_passed,
+        is_passed=verdict.passed and is_completed,
         fail_reason="; ".join(fail_reasons),
         snippets_text=snippets_text,
         full_prompt=full_prompt,
@@ -282,20 +244,41 @@ def generate_markdown_report(
     lines.append("# Code-Agent 自动化评测报告 (Benchmark Report)")
     lines.append(
         f"\n> **评测时间**：{cur_time} ｜ **检索策略**：{retriever_type.upper()} (Top-K={top_k}) ｜ **模型**：DeepSeek (temp=0.0)\n")
-    # 一、大盘看板
+    # 一、大盘看板（分维度与全量细分统计）
     lines.append("## 一、评测大盘总结 (Summary Dashboard)")
+    lines.append("")
+    lines.append("| 评测维度 / 子集 | 用例数 | 通关率 | 检索阶段召回率 (Stage 1) | 引用物理有效率 |")
+    lines.append("| :--- | :---: | :---: | :---: | :---: |")
+
+    code_results = [r for r in results if r.case.id.isdigit() and int(r.case.id) <= 25]
+    doc_results = [r for r in results if r not in code_results]
+
+    if code_results:
+        c_tot = len(code_results)
+        c_pass = sum(1 for r in code_results if r.is_passed)
+        c_ret = sum(1 for r in code_results if r.retrieval_file_hit)
+        c_cit_tot = sum(r.citations_count for r in code_results)
+        c_cit_val = sum(r.valid_citations_count for r in code_results)
+        c_cit_rate = (c_cit_val / c_cit_tot * 100) if c_cit_tot else 0.0
+        lines.append(f"| 💻 **核心代码子集 (Cases 001–025)** | {c_tot} | **{c_pass/c_tot*100:.1f}%** ({c_pass}/{c_tot}) | {c_ret/c_tot*100:.1f}% ({c_ret}/{c_tot}) | {c_cit_rate:.1f}% ({c_cit_val}/{c_cit_tot}) |")
+
+    if doc_results:
+        d_tot = len(doc_results)
+        d_pass = sum(1 for r in doc_results if r.is_passed)
+        d_ret = sum(1 for r in doc_results if r.retrieval_file_hit)
+        d_cit_tot = sum(r.citations_count for r in doc_results)
+        d_cit_val = sum(r.valid_citations_count for r in doc_results)
+        d_cit_rate = (d_cit_val / d_cit_tot * 100) if d_cit_tot else 0.0
+        lines.append(f"| 📄 **架构规约与跨源子集 (Cases 026–030)** | {d_tot} | **{d_pass/d_tot*100:.1f}%** ({d_pass}/{d_tot}) | {d_ret/d_tot*100:.1f}% ({d_ret}/{d_tot}) | {d_cit_rate:.1f}% ({d_cit_val}/{d_cit_tot}) |")
+
+    lines.append(f"| 🌟 **全量综合大盘 (Overall Benchmark)** | {total} | **{pass_rate:.1f}%** ({passed_count}/{total}) | {retrieval_recall:.1f}% ({retrieval_hits}/{total}) | {citation_valid_rate:.1f}% ({valid_citations}/{total_citations}) |")
+    lines.append("")
+    lines.append("### 核心工程与性能指标")
     lines.append("")
     lines.append("| 核心指标 | 实测数值 | 达标判定 / 说明 |")
     lines.append("| :--- | :--- | :--- |")
-    lines.append(f"| **综合通关率** | **{pass_rate:.1f}%** ({passed_count}/{total}) | 端到端各环节严格通过占比 |")
-    lines.append(
-        f"| **检索阶段召回率 (Stage 1)** | **{retrieval_recall:.1f}%** ({retrieval_hits}/{total}) | {retriever_type.upper()} Top-K 命中期望目标文件比率 |")
-    lines.append(
-        f"| **模型回答完成率** | **{completion_rate:.1f}%** ({completed_count}/{total}) | 模型未报错且有实质性回答 |")
-    lines.append(
-        f"| **引用物理有效率** | **{citation_valid_rate:.1f}%** ({valid_citations}/{total_citations}) | 引用行号与文件真实存在比率 |")
-    lines.append(
-        f"| **虚构边界防御率** | **{boundary_rate:.1f}%** ({boundary_passed}/{len(boundary_cases)}) | 面对不存在功能严谨拒答比率 |")
+    lines.append(f"| **模型回答完成率** | **{completion_rate:.1f}%** ({completed_count}/{total}) | 模型未报错且有实质性回答 |")
+    lines.append(f"| **虚构边界防御率** | **{boundary_rate:.1f}%** ({boundary_passed}/{len(boundary_cases)}) | 面对不存在功能严谨拒答比率 |")
     lines.append(f"| **平均单题耗时** | **{avg_latency:.2f}s** | 检索 + 推理端到端延迟 |")
     lines.append(f"| **总消耗 Token** | **{total_tokens:,} tok** | 本次评测累计 Token 消耗 |")
     lines.append(f"| **单题平均 Token** | **{avg_tokens:.0f} tok** | 提示词与回答平均成本 |")
@@ -415,7 +398,7 @@ def run_eval(cases_dir: Path,
             print("📋 【判卷器 5 维白盒体检表】:")
             print(f"  1. [检索召回 Stage 1]: {'✅ 召回期望文件' if res.retrieval_file_hit else '❌ 未召回期望文件'}")
             print(
-                f"  2. [拒答信令检测]:     {'⚠️ 触发“无依据”声明' if res.has_no_evidence_declared else '✅ 未声明“无依据”'}")
+                f"  2. [拒答分级]:         {res.refusal}（global=整题拒答 / scoped=局部免责 / none=正常作答）")
             print(f"  3. [引用出处有效性]:   提取 {res.citations_count} 处引用，物理有效 {res.valid_citations_count} 处")
             print(
                 f"  4. [文件与符号命中]:   文件命中={'✅' if res.file_hit else '❌'}, 符号命中={'✅' if res.symbol_hit else '❌'}")
@@ -462,11 +445,22 @@ def run_eval(cases_dir: Path,
     total_tokens = sum(r.total_tokens for r in results)
     avg_tokens = total_tokens / total if total else 0.0
 
+    code_res = [r for r in results if r.case.id.isdigit() and int(r.case.id) <= 25]
+    doc_res = [r for r in results if r not in code_res]
+
     print("\n" + "=" * 70)
     print("📊 【评测大盘总结 (Benchmark Summary)】")
     print("=" * 70)
     print(f"  - 总用例数:           {total}")
+    if code_res:
+        c_p = sum(1 for r in code_res if r.is_passed)
+        print(f"  - 核心代码子集:       {c_p/len(code_res)*100:.1f}% ({c_p}/{len(code_res)})")
+    if doc_res:
+        d_p = sum(1 for r in doc_res if r.is_passed)
+        print(f"  - 架构规约子集:       {d_p/len(doc_res)*100:.1f}% ({d_p}/{len(doc_res)})")
     print(f"  - 综合通关率:         {pass_rate:.1f}% ({passed_count}/{total})")
+    ret_rate = (sum(1 for r in results if r.retrieval_file_hit) / total * 100) if total else 0.0
+    print(f"  - 检索阶段召回率:     {ret_rate:.1f}%")
     print(f"  - 模型回答完成率:     {completion_rate:.1f}% ({completed_count}/{total})")
     print(f"  - 引用物理有效率:     {citation_valid_rate:.1f}% ({valid_citations}/{total_citations})")
     print(f"  - 虚构边界防御率:     {boundary_rate:.1f}% ({boundary_passed}/{len(boundary_cases)})")
@@ -482,6 +476,7 @@ def run_eval(cases_dir: Path,
             "meta": {
                 "total": total,
                 "pass_rate": pass_rate,
+                "retrieval_recall": ret_rate,
                 "citation_valid_rate": citation_valid_rate,
                 "avg_latency": avg_latency,
                 "timestamp": time.time(),
@@ -492,6 +487,11 @@ def run_eval(cases_dir: Path,
                     "type": r.case.type,
                     "question": r.case.question,
                     "is_passed": r.is_passed,
+                    "retrieval_file_hit": r.retrieval_file_hit,
+                    "file_hit": r.file_hit,
+                    "symbol_hit": r.symbol_hit,
+                    "citations_count": r.citations_count,
+                    "valid_citations_count": r.valid_citations_count,
                     "latency": r.latency,
                     "fail_reason": r.fail_reason,
                     "answer": r.answer,

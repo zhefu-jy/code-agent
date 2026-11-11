@@ -68,6 +68,9 @@ class VectorCodeIndex:
                 "start_line": c.start_line,
                 "end_line": c.end_line,
                 "symbol_name": c.symbol_name,
+                # 多符号块（顶层聚合块）必须把符号列表一起持久化，
+                # 否则向量召回还原出的块会丢失 symbol_names，导致"按符号精确命中"失效
+                "symbol_names": "|".join(c.symbol_names),
                 "source_type": c.source_type,
                 "title_path": c.title_path
             }
@@ -140,6 +143,7 @@ class VectorCodeIndex:
             raw_source = str(meta_dict.get("source_type","code"))
             source_type: Literal["code", "doc"] = "doc" if raw_source == "doc" else "code"
 
+            raw_symbols = str(meta_dict.get("symbol_names", "") or "")
             chunk = CodeChunk(
                 file_path=str(meta_dict.get("file_path", "")),
                 start_line=int(meta_dict.get("start_line", 1)),
@@ -149,6 +153,7 @@ class VectorCodeIndex:
                 symbol_name=str(meta_dict.get("symbol_name", "")),
                 source_type=source_type,
                 title_path=str(meta_dict.get("title_path", "")),
+                symbol_names=[s for s in raw_symbols.split("|") if s],
             )
 
             results.append((chunk, similarity))

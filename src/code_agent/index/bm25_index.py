@@ -1,7 +1,7 @@
-from dataclasses import  dataclass
+from dataclasses import  dataclass, field
 from pathlib import  Path
 import re
-from typing import Literal
+from typing import Literal, Tuple
 
 from rank_bm25 import BM25Okapi
 
@@ -12,9 +12,22 @@ class CodeChunk:
     end_line:int
     content:str
     tokens:list[str]
+    # 主符号名：用于 CLI 展示与单符号语义（保持向后兼容）
     symbol_name: str = ""
     source_type: Literal["code","doc"] = "code"
     title_path: str = ""
+    # 该切块定义的全部符号：一个切块可能聚合多条顶层语句（如 CITATION_PROMPT_REQUIREMENT
+    # 与 _CITATION_PATTERN），此时 symbol_name 只能记第一个，其余必须记在这里，
+    # 否则"按符号精确命中"对这类块永久失效（W6 复盘发现的 Case 014 检索盲区根因）。
+    symbol_names: list[str] = field(default_factory=list)
+
+    def all_symbols(self) -> list[str]:
+        """返回该切块声明的全部符号（去重、去空、保持稳定顺序）"""
+        seen: list[str] = []
+        for name in [self.symbol_name, *self.symbol_names]:
+            if name and name not in seen:
+                seen.append(name)
+        return seen
 
 
 def tokenize_code(text:str) ->list[str]:
@@ -74,21 +87,32 @@ def chunk_file(file_path:Path,chunk_size:int = 60,overlap: int = 20)->list[CodeC
         start += step
     return chunks
 
+DEFAULT_IGNORE_DIRS = {
+    ".git",
+    ".idea",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".workbuddy",
+}
+
+
 class BM25CodeIndex:
     def __init__(self) -> None:
         self.chunks : list[CodeChunk] = []
         self.bm25 : BM25Okapi | None = None
 
-    def build_from_directory(self, root_dir: str | Path,extensions: tuple = (".py", ".java")) -> int:
+    def build_from_directory(self, root_dir: str | Path, extensions: Tuple[str, ...] = (".py",)) -> int:
         """
          递归扫描目录并构建倒排索引，返回总切块数
         """
         path = Path(root_dir)
-        ignore_dirs = {".git", ".idea", "__pycache__", ".venv", "venv", ".mypy_cache"}
         self.chunks.clear()
 
         for p in path.rglob("*"):
-            if any(part in ignore_dirs for part in p.parts):
+            if any(part in DEFAULT_IGNORE_DIRS for part in p.parts):
                 continue
             if p.is_file() and p.suffix.lower() in extensions:
                 self.chunks.extend(chunk_file(p))
