@@ -158,7 +158,19 @@ def main() -> None:
                     print("-" * 64 + "\n")
             continue
 
+        if input_question.startswith("/review"):
+            handle_review(input_question[len("/review"):].strip())
+            continue
 
+        messages.append(HumanMessage(content=input_question))
+        full_answer = ""
+        print("Agent: ", end="", flush=True)
+        for piece in stream_ask(messages):
+            full_answer += piece
+            print(piece, end="", flush=True)
+
+        messages.append(AIMessage(content=full_answer))
+        print("-" * 64)
 
 
 if __name__ == "__main__":

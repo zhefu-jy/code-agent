@@ -1,6 +1,6 @@
 id: "029"
 type: "behavior"
-question: "在 ADR-001 混合检索修订结论中，提及了哪个具体函数名因向量平均池化被稀释漏检？该函数在源码中是在哪个文件定义的？"
+question: "在 ADR-001 混合检索修订结论中，提及了 stream_ask 因向量平均池化被稀释漏检，该函数在源码中是在哪个文件、哪几行定义的？"
 expected_files:
   - "docs/ADR-001-技术选型.md"
   - "src/code_agent/core/model.py"
