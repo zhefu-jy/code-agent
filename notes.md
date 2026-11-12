@@ -515,3 +515,19 @@
     - Stage 3: 依据真实性校验阶段（严密核验物理行号有效性、跨文件边界及核心符号真实点名）；
   - **分维度报告透视**：同时输出“核心代码子集”、“架构规约子集”与“全量综合大盘”，彻底消除平均数掩盖单项回退的漏洞。
 
+---
+
+## 十、W7 S1 评测体系三权分立与静态类型边界
+
+### 1. 评测三维度解耦设计（为什么必须废除单一布尔值 passed）
+* **痛点**：以往单一的 `is_passed: bool` 容易把大模型 API 异常伪装成答案错误，或者把合规的“无依据”拒答当成满分通过，掩盖了真实的工程问题。
+* **解耦原则**：
+  - **SystemStatus**：区分 `SUCCESS`、`MODEL_ERROR`、`TOOL_ERROR`、`BUDGET_EXHAUSTED`，不把捕获降级掩盖为系统正常；
+  - **EvidenceValidity**：物理存在 + 切片覆盖（`citations_in_context`），识别大模型凭空推测行号的幻觉；
+  - **AnswerVerdict**：区分 `CORRECT`、`FACTUAL_ERROR`、`UNRESOLVED_REFUSAL`（合规但任务未解）、`EXPECTED_REFUSAL`（虚构边界正确防御）。
+
+### 2. Mypy 模块交叉检查与 PEP 561 打包机制
+* **现象**：执行 `mypy eval/run_eval.py` 报错 `[import-untyped]: module is installed, but missing library stubs`，而执行 `mypy src eval` 则全绿通过。
+* **原因**：单独检查 `eval/run_eval.py` 时，mypy 尝试从 Python 环境中解析已安装的 `code_agent` 包，而该包缺乏 PEP 561 规定的 `py.typed` 标记文件。联合传入 `src` 后，mypy 直接分析本地源码，类型检查平稳对齐。
+
+

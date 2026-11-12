@@ -27,6 +27,13 @@ from code_agent.core.citation import (
     validate_citation,
 )
 
+from code_agent.core.schemas import (
+    AnswerVerdict,
+    AnswerVerdictKind,
+    EvidenceValidity,
+    JudgeSource,
+)
+
 RefusalKind = Literal["none", "scoped", "global"]
 MatchMode = Literal["any", "all"]
 
@@ -58,6 +65,10 @@ class Verdict:
     missing_files: list[str] = field(default_factory=list)
     missing_symbols: list[str] = field(default_factory=list)
     fail_reasons: list[str] = field(default_factory=list)
+    evidence: EvidenceValidity = field(default_factory=EvidenceValidity)
+    answer_verdict: AnswerVerdict = field(
+        default_factory=lambda: AnswerVerdict(verdict=AnswerVerdictKind.CORRECT)
+    )
 
 
 def _normalize(path: str) -> str:
@@ -122,37 +133,54 @@ def judge_answer(
         # 边界题：必须显式声明无依据。空回答不算拒答（那是"没作答"）。
         if not answer:
             fail_reasons.append("回答为空")
+            verdict_kind = AnswerVerdictKind.FACTUAL_ERROR
         elif refusal == "none":
             fail_reasons.append("虚构问题未能成功拒答（回答中未出现任何无依据声明）")
-        return Verdict(
-            passed=not fail_reasons,
-            refusal=refusal,
-            citations_total=len(citations),
-            citations_valid=len(valid_citations),
-            file_hit=file_hit,
-            symbol_hit=symbol_hit,
-            missing_files=missing_files,
-            missing_symbols=missing_symbols,
-            fail_reasons=fail_reasons,
-        )
-
-    if not answer:
-        fail_reasons.append("回答未完成或模型调用异常")
-    elif refusal == "global" and not spec.allow_partial_refusal:
-        fail_reasons.append("模型声明无依据拒答（检索未召回关键上下文或信息不足）")
+            verdict_kind = AnswerVerdictKind.FACTUAL_ERROR
+        else:
+            verdict_kind = AnswerVerdictKind.EXPECTED_REFUSAL
     else:
-        if len(citations) == 0:
-            fail_reasons.append("回答未标注任何引用出处")
-        elif len(valid_citations) == 0:
-            fail_reasons.append("所有引用的行号均物理校验失败（存在行号漂移或假文件）")
+        if not answer:
+            fail_reasons.append("回答未完成或模型调用异常")
+            verdict_kind = AnswerVerdictKind.FACTUAL_ERROR
+        elif refusal == "global" and not spec.allow_partial_refusal:
+            fail_reasons.append("模型声明无依据拒答（检索未召回关键上下文或信息不足)")
+            # 诚实拒答是合规行为，但任务仍记为“未完成”，严禁当作成功答案
+            verdict_kind = AnswerVerdictKind.UNRESOLVED_REFUSAL
+        else:
+            if len(citations) == 0:
+                fail_reasons.append("回答未标注任何引用出处")
+            elif len(valid_citations) == 0:
+                fail_reasons.append("所有引用的行号均物理校验失败（存在行号漂移或假文件）")
 
-        if not file_hit:
-            fail_reasons.append(f"未命中期望文件 {list(spec.expected_files)}")
-        if not symbol_hit:
-            fail_reasons.append(f"未命中期望关键符号 {missing_symbols}")
+            if not file_hit:
+                fail_reasons.append(f"未命中期望文件 {list(spec.expected_files)}")
+            if not symbol_hit:
+                fail_reasons.append(f"未命中期望关键符号 {missing_symbols}")
 
+            verdict_kind = AnswerVerdictKind.CORRECT if not fail_reasons else AnswerVerdictKind.FACTUAL_ERROR
+
+        # 2. 组装三维度模型
+    evidence_obj = EvidenceValidity(
+        citations_total=len(citations),
+        citations_valid=len(valid_citations),
+        citations_in_context=0,  # 初始为 0，由上层评测器结合检索切片回填
+        is_valid=(len(valid_citations) > 0) if not spec.is_unanswerable else (refusal != "none"),
+        evidence_supported=None,
+    )
+
+    answer_verdict_obj = AnswerVerdict(
+        verdict=verdict_kind,
+        judge_source=JudgeSource.AUTO_RULE,
+        missing_files=missing_files,
+        missing_symbols=missing_symbols,
+        fail_reasons=list(fail_reasons),
+    )
+
+    # 综合通过标准：不仅无 fail_reasons，且结论必须是 CORRECT 或 EXPECTED_REFUSAL
+    is_passed = (verdict_kind in (AnswerVerdictKind.CORRECT, AnswerVerdictKind.EXPECTED_REFUSAL)) and not fail_reasons
     return Verdict(
-        passed=not fail_reasons,
+        passed=is_passed,
         refusal=refusal,
         citations_total=len(citations),
         citations_valid=len(valid_citations),
@@ -161,7 +189,11 @@ def judge_answer(
         missing_files=missing_files,
         missing_symbols=missing_symbols,
         fail_reasons=fail_reasons,
+        evidence=evidence_obj,
+        answer_verdict=answer_verdict_obj,
     )
+
+
 
 
 def _as_str_tuple(raw: Any) -> tuple[str, ...]:

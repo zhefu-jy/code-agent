@@ -1,13 +1,18 @@
 import sys
 import time
 import json
-import hashlib
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any
 import yaml
 import argparse
 from code_agent.core.context import build_snippets_text
+
+from code_agent.core.schemas import (
+    AnswerVerdict,
+    AnswerVerdictKind,
+    EvidenceValidity,
+    SystemStatus,
+)
 
 # 1. Windows 控制台防乱码与 emoji 保护
 if sys.platform == "win32":
@@ -28,8 +33,18 @@ from code_agent.core.model import get_chat_model
 from code_agent.index.bm25_index import BM25CodeIndex, CodeChunk
 from code_agent.index.vector_index import VectorCodeIndex
 from code_agent.index.hybrid_retriever import HybridRetriever, HybridSearchResult
-from code_agent.core.citation import CITATION_PROMPT_REQUIREMENT
-from code_agent.core.judge import CaseSpec, MatchMode, Verdict, judge_answer
+from code_agent.core.citation import (
+    CITATION_PROMPT_REQUIREMENT,
+    extract_citations,
+    validate_citation,
+)
+from code_agent.core.judge import (
+    CaseSpec,
+    MatchMode,
+    Verdict,
+    judge_answer,
+    path_matches,
+)
 
 @dataclass
 class EvalCase:
@@ -45,6 +60,7 @@ class EvalCase:
     intent: str = ""
     source: str = ""
     note: str = ""
+    subset: str = "" # 所属子集/目录（如 regression_self，为未来接入外部工程区分集做准备）
 
     def to_spec(self) -> CaseSpec:
         """转换为判卷内核所需的不可变用例规格"""
@@ -79,13 +95,27 @@ class CaseResult:
     fail_reason: str = ""  # 失败原因归因
     snippets_text: str = "" #实际喂给模型的 BM25 检索代码切片原文
     full_prompt : str = "" #实际喂给大模型的完整组装 Prompt 原文
+    system_status: SystemStatus = SystemStatus.SUCCESS
+    evidence_validity: EvidenceValidity = field(default_factory=EvidenceValidity)
+    answer_verdict: AnswerVerdict = field(
+        default_factory=lambda: AnswerVerdict(verdict=AnswerVerdictKind.CORRECT)
+    )
 
 
-def load_cases(cases_dir:Path) -> list[EvalCase]:
-    """批量加载 eval/cases 目录下的所有 YAML 用例"""
+def load_cases(cases_dir:Path,subset_filter: str | None = None) -> list[EvalCase]:
+    """批量加载 eval/cases 目录及其子目录下的 YAML 用例"""
     cases = []
-    yaml_files = sorted(cases_dir.glob("*.yaml"))
+    # 使用 rglob 递归支持子目录分类用例集
+    yaml_files = sorted(cases_dir.rglob("*.yaml"))
+
     for file_path in yaml_files:
+        # 获取相对子目录名作为 subset（例如 eval/cases/regression_self/001.yaml -> subset 为 regression_self）
+        rel_dir = file_path.parent.relative_to(cases_dir).as_posix()
+        subset_name = rel_dir if rel_dir != "." else "root"
+
+        if subset_filter and subset_name != subset_filter:
+            continue
+
         with open(file_path, "r", encoding="utf-8") as f:
           data = yaml.safe_load(f)
           case_id = str(data.get("id", file_path.stem))
@@ -102,6 +132,7 @@ def load_cases(cases_dir:Path) -> list[EvalCase]:
                   intent=data.get("intent", ""),
                   source=data.get("source", ""),
                   note=data.get("note", ""),
+                  subset=subset_name
               )
           )
 
@@ -160,6 +191,8 @@ def evaluate_single_case(
         f"=== [User Message] ===\n{user_prompt}"
     )
 
+    system_status = SystemStatus.SUCCESS
+
     try:
         response = model.invoke([
             SystemMessage(content=system_prompt),
@@ -167,6 +200,8 @@ def evaluate_single_case(
         ])
         answer = response.content
         is_completed = bool(answer and answer.strip())
+        if not is_completed:
+            system_status = SystemStatus.MODEL_ERROR
 
         #安全提取 Token 消耗元数据
         usage = getattr(response,"usage_metadata",{}) or {}
@@ -178,12 +213,30 @@ def evaluate_single_case(
     except Exception as e:
         answer = f"调用模型异常: {e}"
         is_completed = False
+        system_status = SystemStatus.MODEL_ERROR
         fail_reasons.append("模型调用异常")
 
     latency = time.time() - start_time
 
     # 3. 分段判卷（纯函数内核，见 code_agent/core/judge.py；可离线复跑，不依赖本文件的检索链路）
     verdict: Verdict = judge_answer(case.to_spec(), answer, base_dir=base_dir)
+
+    # 计算 citations_in_context：检查合法引用是否真正落在检索召回的切片行号区间内
+    citations_in_context = 0
+    valid_citations = [
+        res.citation
+        for res in (validate_citation(c, base_dir=base_dir) for c in extract_citations(answer))
+        if res.is_valid
+    ]
+
+    for vc in valid_citations:
+        for chunk,_ in hits:
+            if path_matches(chunk.file_path, vc.file_path):
+                # 判断物理行号是否有交集
+                if max(chunk.start_line, vc.start_line) <= min(chunk.end_line, vc.end_line):
+                    citations_in_context += 1
+                    break
+    verdict.evidence.citations_in_context = citations_in_context
 
     fail_reasons.extend(verdict.fail_reasons)
     if not is_completed and "回答未完成" not in " ".join(fail_reasons):
@@ -208,6 +261,9 @@ def evaluate_single_case(
         fail_reason="; ".join(fail_reasons),
         snippets_text=snippets_text,
         full_prompt=full_prompt,
+        system_status=system_status,
+        evidence_validity=verdict.evidence,
+        answer_verdict=verdict.answer_verdict,
     )
 
 def generate_markdown_report(
@@ -395,6 +451,14 @@ def run_eval(cases_dir: Path,
             print("🤖 【模型原始完整回答】:")
             print(res.answer.strip())
             print("-" * 70)
+
+            print("📋 【判卷器三维度解耦体检表 (W7 三权分立)】:")
+            print(f"  1. [SystemStatus 系统状态]:   {res.system_status.value}")
+            print(f"  2. [EvidenceValidity 举证有效]: 提取 {res.evidence_validity.citations_total} 处, 物理有效 {res.evidence_validity.citations_valid} 处, 切片覆盖 {res.evidence_validity.citations_in_context} 处")
+            print(f"  3. [AnswerVerdict 结论裁决]:   {res.answer_verdict.verdict.value} (判定源: {res.answer_verdict.judge_source.value})")
+            if res.answer_verdict.fail_reasons:
+                print(f"     └─ 归因原因: {'; '.join(res.answer_verdict.fail_reasons)}")
+
             print("📋 【判卷器 5 维白盒体检表】:")
             print(f"  1. [检索召回 Stage 1]: {'✅ 召回期望文件' if res.retrieval_file_hit else '❌ 未召回期望文件'}")
             print(
