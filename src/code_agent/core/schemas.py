@@ -42,6 +42,7 @@ class EvidenceValidity(BaseModel):
     citations_total: int = 0 # 答案中提取到的引用标记总数
     citations_valid: int = 0 # 经物理文件存在性与行号区间校验合法的引用数
     citations_in_context: int = 0 # 引用是否真正命中本次实际读取/喂给模型的切片范围（防凭记忆编造）
+    context_covered: bool | None = None  # 合法引用是否均被切片覆盖（无有效引用时为 None）
     is_valid: bool = False # 物理有效率是否达标（至少存在 1 处有效物理引用，或无依据用例中无伪造引用）
     evidence_supported: bool | None = None # 结论是否真实被证据支撑（None: 待人工复核, True: 已证实, False: 证据不足/伪造）
 

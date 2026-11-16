@@ -1,27 +1,22 @@
+import argparse
 import sys
 from pathlib import Path
-from code_agent.index.hybrid_retriever import HybridRetriever
-
+from collections import Counter
 # 确保在任意工作目录下直接执行此脚本都能正确找到包
 src_dir = str(Path(__file__).resolve().parent.parent)
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
-
-from collections import Counter
-
-from code_agent.core.schemas import ReviewReport, Severity
+from code_agent.core.schemas import ReviewReport, Severity, SystemStatus
 from code_agent.core.model import review_code
 from code_agent.core.context import to_repo_relative
-
-# 仓库根：cli.py → code_agent → src → agent-project
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from code_agent.core.query_engine import (
+    QueryConfig,
+    build_retriever_for_project,
+    execute_query,
+)
+from typing import Any
+from code_agent.index.hybrid_retriever import HybridSearchResult
 MAX_REVIEW_LINES = 800
-
-from code_agent.index.bm25_index import BM25CodeIndex
-from code_agent.core.model import stream_ask
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-
-
 _SEVERITY_TAG: dict[Severity, str] = {
     Severity.FATAL: "🛑 FATAL  ",
     Severity.WARNING: "⚠️  WARNING",
@@ -55,14 +50,14 @@ def _render_review(report: ReviewReport, total_lines: int, display_path: str) ->
     print()
 
 
-def handle_review(raw_arg: str) -> None:
+def handle_review(raw_arg: str,repo_root: Path) -> None:
     if not raw_arg:
         print("⚠️ 用法: /review <文件路径>，例如 /review src/code_agent/cli.py\n")
         return
 
     target = Path(raw_arg)
     if not target.is_absolute():
-        target = REPO_ROOT / target
+        target = repo_root  / target
 
     if not target.is_file():
         print(f"⚠️ 文件不存在: {target}\n")
@@ -79,7 +74,7 @@ def handle_review(raw_arg: str) -> None:
         print(f"⚠️ 该文件 {total_lines} 行，超过单次审查预算 {MAX_REVIEW_LINES} 行，请先切分\n")
         return
 
-    display_path = to_repo_relative(target, base_dir=REPO_ROOT)
+    display_path = to_repo_relative(target, base_dir=repo_root)
     print(f"🔎 正在审查 {display_path}（{total_lines} 行）...\n")
     try:
         report = review_code(code=code, file_path=display_path)
@@ -91,42 +86,50 @@ def handle_review(raw_arg: str) -> None:
 
 
 def main() -> None:
-    # 初始化双路混合检索器（alpha=0.5 词法语义均衡）
-    retriever = HybridRetriever(alpha=0.5)
-    chunk_count = retriever.build_from_sources(
-        code_dir=REPO_ROOT/"src",
-        doc_dir=REPO_ROOT/"docs", )
+    parser = argparse.ArgumentParser(description="Code-Agent 智能代码与规范交互终端")
+    parser.add_argument("--repo", "-r", type=str, default=".", help="目标工程根目录 (默认为当前目录)")
+    parser.add_argument("--retriever", choices=["hybrid", "bm25", "vector"], default="hybrid",
+                        help="检索策略 (默认 hybrid)")
+    args = parser.parse_args()
+    repo_root = Path(args.repo).resolve()
+    if not repo_root.exists():
+        print(f"❌ 指定的工程根目录不存在: {repo_root}")
+        return
 
+    print("=" * 64)
+    print(f"📦 正在为目标工程构建检索索引: {repo_root} ...")
+    retriever = build_retriever_for_project(repo_root, retriever_type=args.retriever)
     code_count = sum(1 for c in retriever.chunks if c.source_type == "code")
     doc_count = sum(1 for c in retriever.chunks if c.source_type == "doc")
 
-    print("=" * 64)
     print(
-        f"🚀 Code-Agent 已启动！(双源混合检索就绪: 共 {chunk_count} 个切块 | "
-        f"💻 源码: {code_count} | 📄 文档: {doc_count})"
+        f"🚀 Code-Agent 已启动！(目标工程: {repo_root.name} ｜ 共 {len(retriever.chunks)} 个切块 ｜ "
+        f"💻 源码: {code_count} ｜ 📄 文档: {doc_count})"
     )
-    print("  - 普通对话：直接输入问题与模型对话")
-    print("  - 检索代码：输入 /search <关键词/语义意图> (例如: /search stream ask)")
+    print("  - 普通提问：直接输入问题（基于目标工程自动检索并给出带行号依据的回答）")
+    print("  - 检索代码：输入 /search <关键词/语义意图> (例如: /search stream_ask)")
     print("  - 审查文件：输入 /review <文件路径> (例如: /review src/code_agent/cli.py)")
     print("  - 退出程序：输入 exit")
     print("=" * 64 + "\n")
 
-    messages: list[BaseMessage] = [SystemMessage(content="你是一个专业的代码工程助手，回答简洁专业。")]
     while True:
-        input_question = input("Question: ")
-        if input_question == 'exit':
+        try:
+            input_question = input("Question: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n👋 已退出。")
             break
-        if not input_question.strip():
+        if input_question.lower() == 'exit':
+            print("👋 再见！")
+            break
+        if not input_question:
             continue
-
-        # 拦截 /search 命令
+        # 1. 拦截 /search 命令
         if input_question.startswith("/search"):
             query = input_question.replace("/search", "").strip()
             if not query:
                 print("⚠️ 请提供要搜索的内容，例如: /search review_code 或 /search 校验引用合法性\n")
                 continue
-
-            results = retriever.search(query, top_k=3)
+            results: list[Any] = list(retriever.search(query, top_k=3))
             if not results:
                 print(f"🔍 未在代码库中找到与 '{query}' 相关的代码片段。\n")
             else:
@@ -136,41 +139,60 @@ def main() -> None:
                         "BOTH": "🔀 [双路共同命中]",
                         "VECTOR": "🧠 [语义向量命中]",
                         "BM25": "🔤 [词法关键词命中]",
+                        "CONTEXT": "📎 [依赖补全引用]",
                     }
-                    hit_tag = tag_map.get(hit.source, hit.source)
-                    display_file = to_repo_relative(Path(hit.chunk.file_path), base_dir=REPO_ROOT)
-
-                    if hit.chunk.source_type == "code":
-                       source_tag = "💻 [源代码]"
-                       meta_info = f"符号: {hit.chunk.symbol_name}" if hit.chunk.symbol_name else "代码片段"
+                    if isinstance(hit, HybridSearchResult):
+                        hit_tag = tag_map.get(hit.source, hit.source)
+                        chunk = hit.chunk
+                        score_info = f"融合分: {hit.score:.4f} (BM25: {hit.bm25_norm_score:.2f} | 向量: {hit.vec_norm_score:.2f})"
                     else:
-                       source_tag = "📄 [规范文档]"
-                       meta_info = f"章节: {hit.chunk.title_path}" if hit.chunk.title_path else "文档片段"
-
-                    print(
-                     f"【TOP {rank}】{source_tag} {hit_tag} 融合分: {hit.score:.4f} "
-                     f"(BM25: {hit.bm25_norm_score:.2f} | 向量: {hit.vec_norm_score:.2f})"
-                    )
+                        chunk, score = hit
+                        hit_tag = f"[{args.retriever.upper()} 命中]"
+                        score_info = f"得分: {score:.2f}"
+                    display_file = to_repo_relative(Path(chunk.file_path), base_dir=repo_root)
+                    if chunk.source_type == "code":
+                        source_tag = "💻 [源代码]"
+                        meta_info = f"符号: {chunk.symbol_name}" if chunk.symbol_name else "代码片段"
+                    else:
+                        source_tag = "📄 [规范文档]"
+                        meta_info = f"章节: {chunk.title_path}" if chunk.title_path else "文档片段"
+                    print(f"【TOP {rank}】{source_tag} {hit_tag} {score_info}")
                     print(f"        🏷️  {meta_info}")
-                    print(f"        📁 {display_file} (第 {hit.chunk.start_line}~{hit.chunk.end_line} 行)")
+                    print(f"        📁 {display_file} (第 {chunk.start_line}~{chunk.end_line} 行)")
                     print("-" * 64)
-                    print(hit.chunk.content)
+                    print(chunk.content)
                     print("-" * 64 + "\n")
             continue
-
+        # 2. 拦截 /review 命令
         if input_question.startswith("/review"):
-            handle_review(input_question[len("/review"):].strip())
+            handle_review(input_question[len("/review"):].strip(), repo_root=repo_root)
             continue
-
-        messages.append(HumanMessage(content=input_question))
-        full_answer = ""
-        print("Agent: ", end="", flush=True)
-        for piece in stream_ask(messages):
-            full_answer += piece
-            print(piece, end="", flush=True)
-
-        messages.append(AIMessage(content=full_answer))
+        # 3. 普通提问：直接交由统一业务内核 execute_query 处理
+        print("Agent 正在分析并检索代码 ...\n")
+        res = execute_query(
+            project_root=repo_root,
+            query=input_question,
+            indexer=retriever,
+            config=QueryConfig(top_k=3),
+        )
+        print("🤖 【回答内容】:")
+        print(res.answer)
         print("-" * 64)
+        # 终端呈现三维度健康体检卡
+        status_icon = "✅" if res.system_status == SystemStatus.SUCCESS else "🛑"
+        coverage_tag = "完整覆盖" if res.evidence_validity.context_covered else "⚠️ 部分未覆盖"
+        if res.evidence_validity.context_covered is None:
+            coverage_tag = "不适用(无引用)"
+        print(
+            f"📋 [三维体检] {status_icon} 系统: {res.system_status.value} ｜ "
+            f"引用: {res.evidence_validity.citations_valid}/{res.evidence_validity.citations_total} 有效 ｜ "
+            f"切片覆盖: {res.evidence_validity.citations_in_context} 处 ({coverage_tag}) ｜ "
+            f"耗时: {res.latency:.2f}s"
+        )
+        if res.evidence_validity.context_covered is False:
+            print("   ⚠️ 提示: 回答中的部分引用行号不在检索给出的切片范围内，可能存在凭记忆推测。")
+        print("=" * 64 + "\n")
+
 
 
 if __name__ == "__main__":

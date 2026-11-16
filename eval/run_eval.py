@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import yaml
 import argparse
 from code_agent.core.context import build_snippets_text
+from code_agent.core.query_engine import QueryConfig, execute_query
 
 from code_agent.core.schemas import (
     AnswerVerdict,
@@ -147,124 +148,54 @@ def evaluate_single_case(
                             base_dir: Path | None = None,
 )-> CaseResult:
     """执行单个用例的全链路评测与客观判卷"""
-    start_time = time.time()
-    fail_reasons: list[str] = []
-
-    # 1. BM25 检索相关代码片段
-    raw_results = indexer.search(case.question, top_k=top_k)
-    hits: list[tuple[CodeChunk, float]] = []
-
-    for item in raw_results:
-        if isinstance(item,HybridSearchResult):
-            hits.append((item.chunk, item.score))
-        else:
-            hits.append(item)
+    """执行单个用例的全链路评测与客观判卷（复用统一业务内核 execute_query）"""
+    root = base_dir or root_dir
+    res = execute_query(
+        project_root=root,
+        query=case.question,
+        indexer=indexer,
+        model=model,
+        config=QueryConfig(top_k=top_k),
+        spec=case.to_spec(),
+    )
 
     # 判定检索阶段是否成功召回了期望文件（Stage 1: 检索召回判断）
     retrieval_file_hit = False
-
-    # 如果本身就没有期望文件，则默认召回成功
     if not case.expected_files:
         retrieval_file_hit = True
-    elif hits:
-        retrieved_paths =[Path(chunk.file_path).as_posix().lower() for chunk, _ in hits]
+    elif res.hits:
+        retrieved_paths = [Path(chunk.file_path).as_posix().lower() for chunk, _ in res.hits]
         for exp_f in case.expected_files:
             clean_exp = Path(exp_f).as_posix().lower()
             if any(clean_exp in rp or rp.endswith(clean_exp) for rp in retrieved_paths):
                 retrieval_file_hit = True
                 break
 
-    snippets_text = build_snippets_text(hits, base_dir=base_dir)
-
-    # 2. 组装 Prompt 并调用大模型（Stage 2）
-    system_prompt = (
-        "你是一个严谨的代码工程与技术规范助手。\n"
-        f"{CITATION_PROMPT_REQUIREMENT}"
-    )
-    user_prompt = (
-        f"【参考上下文片段（包含源码与技术文档）】:\n{snippets_text}\n\n"
-        f"【用户问题】: {case.question}\n"
-        "请根据参考资料回答，并严格标注每一处出处引用。"
-    )
-    full_prompt = (
-        f"=== [System Message] ===\n{system_prompt}\n\n"
-        f"=== [User Message] ===\n{user_prompt}"
-    )
-
-    system_status = SystemStatus.SUCCESS
-
-    try:
-        response = model.invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ])
-        answer = response.content
-        is_completed = bool(answer and answer.strip())
-        if not is_completed:
-            system_status = SystemStatus.MODEL_ERROR
-
-        #安全提取 Token 消耗元数据
-        usage = getattr(response,"usage_metadata",{}) or {}
-        if not usage and hasattr(response,"response_metadata"):
-            usage = response.response_metadata.get("token_usage", {}) or {}
-        prompt_tokens = usage.get("input_tokens", 0)
-        completion_tokens = usage.get("output_tokens", 0)
-        total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
-    except Exception as e:
-        answer = f"调用模型异常: {e}"
-        is_completed = False
-        system_status = SystemStatus.MODEL_ERROR
-        fail_reasons.append("模型调用异常")
-
-    latency = time.time() - start_time
-
-    # 3. 分段判卷（纯函数内核，见 code_agent/core/judge.py；可离线复跑，不依赖本文件的检索链路）
-    verdict: Verdict = judge_answer(case.to_spec(), answer, base_dir=base_dir)
-
-    # 计算 citations_in_context：检查合法引用是否真正落在检索召回的切片行号区间内
-    citations_in_context = 0
-    valid_citations = [
-        res.citation
-        for res in (validate_citation(c, base_dir=base_dir) for c in extract_citations(answer))
-        if res.is_valid
-    ]
-
-    for vc in valid_citations:
-        for chunk,_ in hits:
-            if path_matches(chunk.file_path, vc.file_path):
-                # 判断物理行号是否有交集
-                if max(chunk.start_line, vc.start_line) <= min(chunk.end_line, vc.end_line):
-                    citations_in_context += 1
-                    break
-    verdict.evidence.citations_in_context = citations_in_context
-
-    fail_reasons.extend(verdict.fail_reasons)
-    if not is_completed and "回答未完成" not in " ".join(fail_reasons):
-        fail_reasons.insert(0, "模型调用异常")
-
+    is_completed = (res.system_status == SystemStatus.SUCCESS) and bool(res.answer and res.answer.strip())
     return CaseResult(
         case=case,
-        answer=answer,
-        latency=latency,
+        answer=res.answer,
+        latency=res.latency,
         is_completed=is_completed,
-        has_no_evidence_declared=verdict.refusal != "none",
-        refusal=verdict.refusal,
-        citations_count=verdict.citations_total,
-        valid_citations_count=verdict.citations_valid,
+        has_no_evidence_declared=res.verdict.refusal != "none" if res.verdict else False,
+        refusal=res.verdict.refusal if res.verdict else "none",
+        citations_count=res.evidence_validity.citations_total,
+        valid_citations_count=res.evidence_validity.citations_valid,
         retrieval_file_hit=retrieval_file_hit,
-        file_hit=verdict.file_hit,
-        symbol_hit=verdict.symbol_hit,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        is_passed=verdict.passed and is_completed,
-        fail_reason="; ".join(fail_reasons),
-        snippets_text=snippets_text,
-        full_prompt=full_prompt,
-        system_status=system_status,
-        evidence_validity=verdict.evidence,
-        answer_verdict=verdict.answer_verdict,
+        file_hit=res.verdict.file_hit if res.verdict else False,
+        symbol_hit=res.verdict.symbol_hit if res.verdict else False,
+        prompt_tokens=res.prompt_tokens,
+        completion_tokens=res.completion_tokens,
+        total_tokens=res.total_tokens,
+        is_passed=bool(res.verdict and res.verdict.passed and is_completed),
+        fail_reason="; ".join(res.answer_verdict.fail_reasons),
+        snippets_text=res.snippets_text,
+        full_prompt=res.full_prompt,
+        system_status=res.system_status,
+        evidence_validity=res.evidence_validity,
+        answer_verdict=res.answer_verdict,
     )
+
 
 def generate_markdown_report(
         results: list[CaseResult],
@@ -559,7 +490,24 @@ def run_eval(cases_dir: Path,
                     "latency": r.latency,
                     "fail_reason": r.fail_reason,
                     "answer": r.answer,
+                    "subset": r.case.subset,
                     "total_tokens": r.total_tokens,
+                    "system_status": r.system_status.value,
+                    "evidence_validity": {
+                        "citations_total": r.evidence_validity.citations_total,
+                        "citations_valid": r.evidence_validity.citations_valid,
+                        "citations_in_context": r.evidence_validity.citations_in_context,
+                        "is_valid": r.evidence_validity.is_valid,
+                        "evidence_supported": r.evidence_validity.evidence_supported,
+                    },
+                    "answer_verdict": {
+                        "verdict": r.answer_verdict.verdict.value,
+                        "judge_source": r.answer_verdict.judge_source.value,
+                        "fail_reasons": r.answer_verdict.fail_reasons,
+                        "missing_files": r.answer_verdict.missing_files,
+                        "missing_symbols": r.answer_verdict.missing_symbols,
+                        "human_note": r.answer_verdict.human_note,
+                    },
                 }
                 for r in results
             ],

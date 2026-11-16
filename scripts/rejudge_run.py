@@ -35,7 +35,7 @@ from code_agent.core.judge import CaseSpec, case_spec_from_mapping, judge_answer
 def load_specs(cases_dir: Path) -> dict[str, CaseSpec]:
     """从 eval/cases/*.yaml 读取用例元数据，按 id 建索引"""
     specs: dict[str, CaseSpec] = {}
-    for file_path in sorted(cases_dir.glob("*.yaml")):
+    for file_path in sorted(cases_dir.rglob("*.yaml")):
         with open(file_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         spec = case_spec_from_mapping(data, fallback_id=file_path.stem)

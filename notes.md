@@ -530,4 +530,58 @@
 * **现象**：执行 `mypy eval/run_eval.py` 报错 `[import-untyped]: module is installed, but missing library stubs`，而执行 `mypy src eval` 则全绿通过。
 * **原因**：单独检查 `eval/run_eval.py` 时，mypy 尝试从 Python 环境中解析已安装的 `code_agent` 包，而该包缺乏 PEP 561 规定的 `py.typed` 标记文件。联合传入 `src` 后，mypy 直接分析本地源码，类型检查平稳对齐。
 
+---
+
+## 十一、W7 S2 统一问答内核抽取与工程根目录解耦
+
+### 1. 业务流同构性破局：为什么 CLI 与 Eval 必须共用 query_engine
+* **遇到的问题**：
+  在 W7 S1 之前，`cli.py` 自行实现了一套交互式检索，普通问答直接调用无检索的 `stream_ask`；而 `run_eval.py` 则自行编写了片段拼装、系统 Prompt 注入、大模型调用与判卷打分。两套业务流割裂导致“评测测的是一套逻辑，终端跑的是另一套逻辑”，评测通关并不等价于真实交付可用。
+* **坑在哪里**：
+  业务流程如果存在两处实现，任何针对 Prompt 模板、引用铁律、切片格式或模型参数的优化，都必须在两个文件里手动同步；一旦漏同步，评测就变成了脱离现实的“玩具基线”。
+* **解决与梳理**：
+  - 抽取无状态统一问答内核 `src/code_agent/core/query_engine.py`；
+  - 核心接口 `execute_query` 将“索引检索 $\to$ 上下文标尺拼装 $\to$ 大模型调用 $\to$ 判卷校验 $\to$ 三维度状态组装”完整闭环；
+  - 评测执行器 `evaluate_single_case` 与终端 `cli.py` 彻底退化为调用 `execute_query` 的展示外壳，实现 100% 业务流程同构。
+
+---
+
+### 2. 工程根目录解耦与自适应项目布局探测
+* **遇到的问题**：
+  以往检索器与审查入口深度绑定了当前工程的全局路径 `REPO_ROOT / "src"` 与 `REPO_ROOT / "docs"`，导致系统无法分析外部工程或独立微型代码库。
+* **坑在哪里**：
+  外部开源 Python 项目可能采用标准 `src/` 布局，也可能采用直接将 `.py` 文件置于根目录的平铺布局（Flat Layout）。若写死 `src/`，平铺项目会因为目录不存在而导致切块数为 0。
+* **解决与梳理**：
+  - 在 `query_engine.py` 中抽象 `build_retriever_for_project(project_root, ...)`；
+  - 优先尊重显式传入的 `code_dir` 与 `doc_dir`；若未显式指定，自适应探测：`root / "src"` 存在则切分 `src/`，否则回退为以 `root` 为源码根；文档目录检测到 `root / "docs"` 存在则建库，不存在则优雅置空；
+  - CLI 通过新增 `--repo` 命令行参数支持用户指定任意项目目录。
+
+---
+
+### 3. 多态检索联合类型的静态类型收窄与解包（Union Type Narrowing）
+* **遇到的问题**：
+  在 `cli.py` 中遍历 `retriever.search(query)` 返回的结果时，mypy 报出 10 条 `error: "object" has no attribute "source"`，或者在尝试解包 `chunk, score = hit` 时报错 `error: "object" object is not iterable`。
+* **坑在哪里**：
+  `build_retriever_for_project` 返回的是联合类型 `HybridRetriever | BM25CodeIndex | VectorCodeIndex`。
+  - `HybridRetriever.search` 返回的是 `List[HybridSearchResult]`；
+  - `BM25CodeIndex.search` 返回的是 `List[Tuple[CodeChunk, float]]`。
+  静态类型检查器将两种列表迭代出来的元素向上泛化为最近公共祖先 **`object`**。而基类 `object` 既不具备 `.chunk` 属性，也不是可迭代容器，导致后续解构与属性访问全面告警。
+* **解决与梳理**：
+  - 在 `cli.py` 遍历前显式标注泛型：`results: list[Any] = list(retriever.search(query, top_k=3))`；
+  - 配合 `if isinstance(hit, HybridSearchResult):` 显式类型守卫。若是混合检索对象，提取细分多源打分（BM25 分与向量分）；若是非混合检索元组，解构为 `chunk, score = hit`；
+  - **收益**：既消除了 mypy 的静态类型误报，又让终端在面对 `--retriever bm25` 等单路检索策略时具备极强的防御性兼容能力。
+
+---
+
+### 4. 切片覆盖度 context_covered 布尔信号与凭记忆作答的辨析
+* **遇到的问题**：
+  模型在回答中给出了有效的物理文件和真实行号，但这些行号并不在本次检索喂给它的切块片段中。
+* **认知辨析**：
+  - `citations_valid`：只证明该行号在磁盘物理文件上真实存在；
+  - `citations_in_context`：证明该行号落在本次 RAG 切块的物理行号区间内；
+  - `context_covered`：布尔指标。当所有有效引用均落在切片范围内时为 `True`；只要有 1 处引用落在了切片外部则为 `False`；无引用时为 `None`。
+* **工程价值**：
+  在大模型具有代码库部分训练记忆或长文本残存时，`context_covered` 能够精准识别模型是“根据本次检索证据严格回答”还是“凭先验记忆抢答”，为 RAG 忠实度（Faithfulness）评测提供确定性度量。
+
+
 
