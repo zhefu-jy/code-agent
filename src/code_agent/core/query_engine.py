@@ -20,6 +20,13 @@ from code_agent.core.schemas import (
     EvidenceValidity,
     SystemStatus,
 )
+from code_agent.core.trace import (
+    SnippetSnapshot,
+    TraceRecord,
+    generate_trace_id,
+    get_git_info,
+    save_trace,
+)
 from code_agent.index.bm25_index import BM25CodeIndex, CodeChunk
 from code_agent.index.hybrid_retriever import HybridRetriever, HybridSearchResult
 from code_agent.index.vector_index import VectorCodeIndex
@@ -33,6 +40,8 @@ class QueryConfig:
     temperature: float = 0.0
     code_dir: Optional[Path | str] = None
     doc_dir: Optional[Path | str] = None
+    enable_trace: bool = True
+    trace_dir: Optional[Path | str] = None
 
 @dataclass
 class QueryResult:
@@ -50,6 +59,8 @@ class QueryResult:
     total_tokens: int
     full_prompt: str
     verdict: Optional[Verdict] = None
+    trace_id: Optional[str] = None
+    trace_path: Optional[Path] = None
 
 
 def build_retriever_for_project(
@@ -186,6 +197,45 @@ def execute_query(
         verdict.answer_verdict.verdict = AnswerVerdictKind.FACTUAL_ERROR
         if "模型调用异常" not in verdict.answer_verdict.fail_reasons:
             verdict.answer_verdict.fail_reasons.insert(0, "模型调用异常")
+
+    # 6. 全链路 Trace 审计记账落盘
+    trace_id: Optional[str] = None
+    trace_path: Optional[Path] = None
+    if cfg.enable_trace:
+        trace_id = generate_trace_id()
+        target_trace_dir = Path(cfg.trace_dir).resolve() if cfg.trace_dir else (root / "traces")
+        git_revision, is_git_dirty = get_git_info(root)
+        snippet_snapshots = [
+            SnippetSnapshot.from_chunk(chunk, score)
+            for chunk, score in hits
+        ]
+        trace_record = TraceRecord(
+            trace_id=trace_id,
+            agent_version="0.1.0",
+            repo_path=str(root),
+            git_revision=git_revision,
+            is_git_dirty=is_git_dirty,
+            query=query,
+            config={
+                "retriever_type": cfg.retriever_type,
+                "top_k": cfg.top_k,
+                "alpha": cfg.alpha,
+                "temperature": cfg.temperature,
+            },
+            spec_id=active_spec.id if active_spec and active_spec.id != "adhoc" else None,
+            snippets=snippet_snapshots,
+            full_prompt=full_prompt,
+            raw_answer=answer,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            latency=latency,
+            system_status=system_status,
+            evidence_validity=verdict.evidence,
+            answer_verdict=verdict.answer_verdict,
+        )
+        trace_path = save_trace(trace_record, target_trace_dir)
+
     return QueryResult(
         query=query,
         answer=answer,
@@ -200,4 +250,6 @@ def execute_query(
         total_tokens=total_tokens,
         full_prompt=full_prompt,
         verdict=verdict,
+        trace_id=trace_id,
+        trace_path=trace_path,
     )

@@ -191,6 +191,9 @@ def main() -> None:
         )
         if res.evidence_validity.context_covered is False:
             print("   ⚠️ 提示: 回答中的部分引用行号不在检索给出的切片范围内，可能存在凭记忆推测。")
+        if res.trace_path:
+            display_trace = to_repo_relative(res.trace_path, base_dir=repo_root)
+            print(f"   📝 Trace 审计已记录: {display_trace}")
         print("=" * 64 + "\n")
 
 

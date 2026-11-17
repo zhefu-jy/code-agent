@@ -2,6 +2,32 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-17 (Day 25 · W7 S3 全链路 Trace 审计记账与人工标记机制)
+
+### 一、今日完成事项
+1. **全链路 Trace 审计与切片快照契约**：
+   - 实现 `src/code_agent/core/trace.py`，支持通过 `git -C` 感知目标仓库的 Revision 与 Dirty 状态（非 Git 环境安全降级）；
+   - 定义 `SnippetSnapshot`，为每次喂给模型的切片记录元数据及其文本 SHA-256 哈希快照；
+   - 定义 `TraceRecord` 数据实体，完整持久化环境版本、配置、快照、Prompt、原始回答与三维判定。
+2. **问答内核与 CLI 原生 Trace 联动**：
+   - 在 `QueryConfig` 与 `QueryResult` 中新增 Trace 字段；
+   - 改造 `src/code_agent/core/query_engine.py`：每次问答自动完成 Trace 组装与落盘；
+   - 改造 `src/code_agent/cli.py`：问答后直观呈现审计 Trace 路径。
+3. **人工复核标记工具落地**：
+   - 编写 `scripts/review_verdict.py`，支持清单扫描（`--list`）、交互式审核（`--interactive`）与单项标定；
+   - 支持将结论定性升级为 `JudgeSource.HUMAN_REVIEW` 并回填 `human_note` 与 `run.json`。
+4. **自动化单测与全量验收**：
+   - 编写 `tests/test_trace.py`（5 项离线单测）；
+   - 全量 58 项单元测试 100% 通过（10.71s），`mypy src eval scripts tests/test_trace.py` 零告警通过（24 个源文件）。
+
+### 二、今日有价值提问清单（复习索引）
+1. 为什么在严肃评测和生产追溯中，仅记录 Git Commit Hash 不能代替喂给模型的代码片段快照？（Git Dirty 状态与未提交修改的盲区）
+2. 为什么要为每个检索切片计算 SHA-256 哈希值？它在离线重放和数据一致性比对中有何价值？
+3. 自动化规则（AUTO_RULE）通过为什么不能直接等价于“答案正确（CORRECT）”？“机器查规则，人工审事实”的工程分工边界在哪里？
+4. 当人工完成一次复核标定后，如何科学地维护大盘的统计指标（如通过率、待复核数），避免污染自动化测试基线？
+
+---
+
 ## 2026-11-16 (Day 24 · W7 S1 收尾与 W7 S2 统一问答内核抽取)
 
 ### 一、今日完成事项
