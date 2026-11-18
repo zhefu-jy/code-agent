@@ -9,7 +9,7 @@
 2. **完成常见布局识别**：支持标准 `src/` 布局、普通 flat 布局和未识别布局 `unknown`，并对混合布局、空 `src/` 目录记录 warning。
 3. **完成文件分类与过滤**：识别源码、测试、文档及 `pyproject.toml`、`setup.py`、`requirements.txt` 等根目录配置文件；遍历时排除 Git、虚拟环境、缓存和构建目录。
 4. **补充扫描边界防御**：跳过符号链接目录与文件，记录不可访问目录，统一使用相对工程根目录的路径并按稳定顺序输出。
-5. **完成测试与真实工程验收**：8 个扫描器测试函数手动执行全部通过；`py_compile` 通过；当前项目识别为 `src` 布局，`eval/fixtures/mini_repo` 识别为 `flat` 布局。当前环境未安装 pytest，因此未执行 pytest 命令。
+5. **完成测试与真实工程验收**：在 `code-agent` Conda 环境中定向测试 8 passed、全量回归 66 passed；`py_compile` 通过；当前项目识别为 `src` 布局，`eval/fixtures/mini_repo` 识别为 `flat` 布局。全量测试使用仓库外临时目录，避免干扰非 Git 目录边界测试。
 
 ### 二、今日有价值提问清单（复习索引）
 1. `flat` 和 `unknown` 布局标签分别解决什么问题？为什么不能只返回文件列表？
