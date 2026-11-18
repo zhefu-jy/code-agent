@@ -1,0 +1,10 @@
+[project]
+name = "minisite"
+version = "0.1.0"
+description = "A lightweight standard-library-only static site generator."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+minisite = "minisite.cli:main"

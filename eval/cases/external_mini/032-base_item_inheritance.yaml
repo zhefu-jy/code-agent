@@ -1,0 +1,13 @@
+id: "032"
+type: "location"
+question: "minisite 中的 Post 和 Page 类分别继承自哪个基类？它们是如何重写 render_html 方法的？"
+expected_files:
+  - "minisite/models.py"
+expected_symbols:
+  - "BaseItem"
+  - "Page"
+  - "Post"
+is_unanswerable: false
+intent: "考察模型对核心类继承体系与抽象方法重写逻辑的定位与理解"
+source: "external_mini"
+note: "W7 W 外部工程面向对象继承体系用例"

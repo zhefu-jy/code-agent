@@ -25,7 +25,7 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 show_error_codes = true
 pretty = true
-exclude = '(^|/)(\.venv|venv|build|dist|\.mypy_cache|\.pytest_cache)(/|$)|\.egg-info'
+exclude = '(^|/)(\.venv|venv|build|dist|\.mypy_cache|\.pytest_cache|fixtures)(/|$)|\.egg-info'
 
 [[tool.mypy.overrides]]
 module = ["rank_bm25", "rank_bm25.*", "chromadb", "chromadb.*"]

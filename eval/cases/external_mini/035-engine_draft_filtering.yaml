@@ -1,0 +1,13 @@
+id: "035"
+type: "behavior"
+question: "BuildEngine 在扫描文档时，是如何依据 SiteConfig.include_drafts 和文档的 is_published 状态来过滤草稿的？"
+expected_files:
+  - "minisite/engine.py"
+  - "minisite/models.py"
+expected_symbols:
+  - "discover_documents"
+  - "is_published"
+is_unanswerable: false
+intent: "考察跨模块数据流转与布尔条件组合判定逻辑"
+source: "external_mini"
+note: "W7 W 外部工程跨模块草稿过滤用例"

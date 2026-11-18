@@ -1,0 +1,12 @@
+id: "033"
+type: "behavior"
+question: "validate_config 函数中定义了哪些校验规则？在什么情况下会抛出 ConfigError 异常？"
+expected_files:
+  - "minisite/config.py"
+expected_symbols:
+  - "validate_config"
+  - "ConfigError"
+is_unanswerable: false
+intent: "考察模型对配置合法性边界条件与异常抛出机制的理解"
+source: "external_mini"
+note: "W7 W 外部工程配置校验逻辑用例"

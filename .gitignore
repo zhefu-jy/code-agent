@@ -31,4 +31,8 @@ Thumbs.db
 # 问答 Trace 审计运行产物
 traces/*.json
 !traces/.gitkeep
+**/traces/*.json
+!**/traces/.gitkeep
 
+# 本地个人笔记（不提交）
+每周必看.txt

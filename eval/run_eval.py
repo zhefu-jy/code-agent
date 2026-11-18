@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 import yaml
 import argparse
 from code_agent.core.context import build_snippets_text
-from code_agent.core.query_engine import QueryConfig, execute_query
+from code_agent.core.query_engine import (
+    QueryConfig,
+    build_retriever_for_project,
+    execute_query,
+)
 
 from code_agent.core.schemas import (
     AnswerVerdict,
@@ -237,26 +241,40 @@ def generate_markdown_report(
     lines.append("| 评测维度 / 子集 | 用例数 | 通关率 | 检索阶段召回率 (Stage 1) | 引用物理有效率 |")
     lines.append("| :--- | :---: | :---: | :---: | :---: |")
 
-    code_results = [r for r in results if r.case.id.isdigit() and int(r.case.id) <= 25]
-    doc_results = [r for r in results if r not in code_results]
+    # 动态按子集分类统计（支持 regression_self 与 external_mini 自动隔离）
+    subsets = sorted(set(r.case.subset for r in results if r.case.subset))
+    if subsets:
+        for s_name in subsets:
+            s_results = [r for r in results if r.case.subset == s_name]
+            s_tot = len(s_results)
+            s_pass = sum(1 for r in s_results if r.is_passed)
+            s_ret = sum(1 for r in s_results if r.retrieval_file_hit)
+            s_cit_tot = sum(r.citations_count for r in s_results)
+            s_cit_val = sum(r.valid_citations_count for r in s_results)
+            s_cit_rate = (s_cit_val / s_cit_tot * 100) if s_cit_tot else 0.0
+            label = "🌐 **外部工程子集 (external_mini)**" if s_name == "external_mini" else f"📁 **{s_name} 子集**"
+            lines.append(f"| {label} | {s_tot} | **{s_pass/s_tot*100:.1f}%** ({s_pass}/{s_tot}) | {s_ret/s_tot*100:.1f}% ({s_ret}/{s_tot}) | {s_cit_rate:.1f}% ({s_cit_val}/{s_cit_tot}) |")
+    else:
+        code_results = [r for r in results if r.case.id.isdigit() and int(r.case.id) <= 25]
+        doc_results = [r for r in results if r not in code_results]
 
-    if code_results:
-        c_tot = len(code_results)
-        c_pass = sum(1 for r in code_results if r.is_passed)
-        c_ret = sum(1 for r in code_results if r.retrieval_file_hit)
-        c_cit_tot = sum(r.citations_count for r in code_results)
-        c_cit_val = sum(r.valid_citations_count for r in code_results)
-        c_cit_rate = (c_cit_val / c_cit_tot * 100) if c_cit_tot else 0.0
-        lines.append(f"| 💻 **核心代码子集 (Cases 001–025)** | {c_tot} | **{c_pass/c_tot*100:.1f}%** ({c_pass}/{c_tot}) | {c_ret/c_tot*100:.1f}% ({c_ret}/{c_tot}) | {c_cit_rate:.1f}% ({c_cit_val}/{c_cit_tot}) |")
+        if code_results:
+            c_tot = len(code_results)
+            c_pass = sum(1 for r in code_results if r.is_passed)
+            c_ret = sum(1 for r in code_results if r.retrieval_file_hit)
+            c_cit_tot = sum(r.citations_count for r in code_results)
+            c_cit_val = sum(r.valid_citations_count for r in code_results)
+            c_cit_rate = (c_cit_val / c_cit_tot * 100) if c_cit_tot else 0.0
+            lines.append(f"| 💻 **核心代码子集 (Cases 001–025)** | {c_tot} | **{c_pass/c_tot*100:.1f}%** ({c_pass}/{c_tot}) | {c_ret/c_tot*100:.1f}% ({c_ret}/{c_tot}) | {c_cit_rate:.1f}% ({c_cit_val}/{c_cit_tot}) |")
 
-    if doc_results:
-        d_tot = len(doc_results)
-        d_pass = sum(1 for r in doc_results if r.is_passed)
-        d_ret = sum(1 for r in doc_results if r.retrieval_file_hit)
-        d_cit_tot = sum(r.citations_count for r in doc_results)
-        d_cit_val = sum(r.valid_citations_count for r in doc_results)
-        d_cit_rate = (d_cit_val / d_cit_tot * 100) if d_cit_tot else 0.0
-        lines.append(f"| 📄 **架构规约与跨源子集 (Cases 026–030)** | {d_tot} | **{d_pass/d_tot*100:.1f}%** ({d_pass}/{d_tot}) | {d_ret/d_tot*100:.1f}% ({d_ret}/{d_tot}) | {d_cit_rate:.1f}% ({d_cit_val}/{d_cit_tot}) |")
+        if doc_results:
+            d_tot = len(doc_results)
+            d_pass = sum(1 for r in doc_results if r.is_passed)
+            d_ret = sum(1 for r in doc_results if r.retrieval_file_hit)
+            d_cit_tot = sum(r.citations_count for r in doc_results)
+            d_cit_val = sum(r.valid_citations_count for r in doc_results)
+            d_cit_rate = (d_cit_val / d_cit_tot * 100) if d_cit_tot else 0.0
+            lines.append(f"| 📄 **架构规约与跨源子集 (Cases 026–030)** | {d_tot} | **{d_pass/d_tot*100:.1f}%** ({d_pass}/{d_tot}) | {d_ret/d_tot*100:.1f}% ({d_ret}/{d_tot}) | {d_cit_rate:.1f}% ({d_cit_val}/{d_cit_tot}) |")
 
     lines.append(f"| 🌟 **全量综合大盘 (Overall Benchmark)** | {total} | **{pass_rate:.1f}%** ({passed_count}/{total}) | {retrieval_recall:.1f}% ({retrieval_hits}/{total}) | {citation_valid_rate:.1f}% ({valid_citations}/{total_citations}) |")
     lines.append("")
@@ -312,38 +330,31 @@ def run_eval(cases_dir: Path,
              top_k : int = 3,
              verbose: bool = False, #控制是否详细打印切片
              show_prompt: bool = False, #控制是否打印完整Prompt
-             is_replay: bool = False
+             is_replay: bool = False,
+             repo_path: Path | None = None,
+             subset: str | None = None,
              ) -> None:
     """运行全量评测并输出基线报告"""
     print("=" * 70)
     print(f"🚀 开始执行 Code-Agent 黄金案例集自动化评测 (检索策略: {retriever_type.upper()})")
     print("=" * 70)
 
-    # 1. 构建 BM25 本地索引
+    # 1. 动态为指定工程构建索引（消除当前仓库路径硬编码）
     root_path = Path(__file__).resolve().parent.parent
-    src_path = root_path / "src"
-    docs_path = root_path / "docs"
-    print(f"📦 正在扫描并构建索引 [{retriever_type.upper()}]: src={src_path}, docs={docs_path} ...")
+    target_repo = Path(repo_path).resolve() if repo_path else root_path
+    print(f"📦 正在扫描并构建工程索引 [{retriever_type.upper()}]: repo={target_repo} ...")
 
-    indexer: BM25CodeIndex | VectorCodeIndex | HybridRetriever
-    if retriever_type == "bm25":
-        indexer = BM25CodeIndex()
-        total_chunks = indexer.build_from_directory(src_path)
-    elif retriever_type == "vector":
-        indexer = VectorCodeIndex()
-        total_chunks = indexer.build_from_directory(src_path)
-    elif retriever_type == "hybrid":
-        indexer = HybridRetriever(alpha=0.5)
-        total_chunks = indexer.build_from_sources(code_dir=src_path, doc_dir=docs_path)
-    else:
-        raise ValueError(f"不支持的检索策略: {retriever_type}")
-    print(f"✅ 索引构建完成，总切块数: {total_chunks}")
+    indexer = build_retriever_for_project(
+        project_root=target_repo,
+        retriever_type=retriever_type,
+    )
+    print(f"✅ 索引构建完成")
 
     # 2. 初始化大模型（使用 temperature=0.0 保证评测确定性）
     model = get_chat_model(temperature=0.0)
 
-    # 3. 加载用例
-    cases = load_cases(cases_dir)
+    # 3. 按子集筛选加载用例
+    cases = load_cases(cases_dir, subset_filter=subset)
     if case_filter:
         targer_ids = [cid.strip() for cid in case_filter.split(",") if cid.strip()]
         # 兼容匹配：支持精准匹配 "005" 或前缀匹配 "005-line_out_of_bounds"
@@ -361,7 +372,7 @@ def run_eval(cases_dir: Path,
     # 4. 逐题运行
     for i, case in enumerate(cases, 1):
         print(f"[{i:02d}/{len(cases):02d}] 正在评测 [{case.type.upper()}] {case.id} ... ", end="", flush=True)
-        res = evaluate_single_case(case, indexer, model, top_k=top_k, base_dir=root_path)
+        res = evaluate_single_case(case, indexer, model, top_k=top_k, base_dir=target_repo)
         results.append(res)
 
         status_tag = "✅ PASS" if res.is_passed else "❌ FAIL"
@@ -440,19 +451,26 @@ def run_eval(cases_dir: Path,
     total_tokens = sum(r.total_tokens for r in results)
     avg_tokens = total_tokens / total if total else 0.0
 
-    code_res = [r for r in results if r.case.id.isdigit() and int(r.case.id) <= 25]
-    doc_res = [r for r in results if r not in code_res]
+    subsets = sorted(set(r.case.subset for r in results if r.case.subset))
 
     print("\n" + "=" * 70)
     print("📊 【评测大盘总结 (Benchmark Summary)】")
     print("=" * 70)
     print(f"  - 总用例数:           {total}")
-    if code_res:
-        c_p = sum(1 for r in code_res if r.is_passed)
-        print(f"  - 核心代码子集:       {c_p/len(code_res)*100:.1f}% ({c_p}/{len(code_res)})")
-    if doc_res:
-        d_p = sum(1 for r in doc_res if r.is_passed)
-        print(f"  - 架构规约子集:       {d_p/len(doc_res)*100:.1f}% ({d_p}/{len(doc_res)})")
+    if subsets:
+        for s_name in subsets:
+            s_res = [r for r in results if r.case.subset == s_name]
+            s_p = sum(1 for r in s_res if r.is_passed)
+            print(f"  - 子集 [{s_name}]: {s_p/len(s_res)*100:.1f}% ({s_p}/{len(s_res)})")
+    else:
+        code_res = [r for r in results if r.case.id.isdigit() and int(r.case.id) <= 25]
+        doc_res = [r for r in results if r not in code_res]
+        if code_res:
+            c_p = sum(1 for r in code_res if r.is_passed)
+            print(f"  - 核心代码子集:       {c_p/len(code_res)*100:.1f}% ({c_p}/{len(code_res)})")
+        if doc_res:
+            d_p = sum(1 for r in doc_res if r.is_passed)
+            print(f"  - 架构规约子集:       {d_p/len(doc_res)*100:.1f}% ({d_p}/{len(doc_res)})")
     print(f"  - 综合通关率:         {pass_rate:.1f}% ({passed_count}/{total})")
     ret_rate = (sum(1 for r in results if r.retrieval_file_hit) / total * 100) if total else 0.0
     print(f"  - 检索阶段召回率:     {ret_rate:.1f}%")
@@ -522,6 +540,8 @@ def run_eval(cases_dir: Path,
 
 def main():
     parser = argparse.ArgumentParser(description="Code-Agent 自动化黄金测评套件")
+    parser.add_argument("--repo", type=str, default=None, help="目标工程根目录（默认当前项目）")
+    parser.add_argument("--subset", type=str, default=None, help="指定评测子集（如 external_mini 或 regression_self）")
     parser.add_argument("--case", "-c", type=str, default=None, help="指定用例ID进行调试（如 -c 005 或 -c 001,005）")
     parser.add_argument("--replay", type=str, default=None, help="深度重放调试模式（如 --replay 022 或 --replay failed）")
     parser.add_argument("--top-k", "-k", type=int, default=3, help="BM25 检索召回的切块数量（默认 3）")
@@ -563,11 +583,14 @@ def main():
        else:
             case_filter = args.replay
 
+    is_external = args.subset == "external_mini" or (args.repo and Path(args.repo).resolve() != root_path)
 
     if args.output:
         output_file: Path | None = Path(args.output)
     elif case_filter:
         output_file = None            # 局部调试不落盘，保护历史基线
+    elif is_external:
+        output_file = runs_dir / "external_baseline_001.json"
     else:
         output_file = runs_dir / "baseline_bm25.json"
 
@@ -575,6 +598,8 @@ def main():
         report_file: Path | None = Path(args.report)
     elif case_filter:
         report_file = None
+    elif is_external:
+        report_file = runs_dir / "external_baseline_001.md"
     else:
         report_file = runs_dir / "report-001.md"
 
@@ -588,6 +613,8 @@ def main():
         verbose=verbose,
         show_prompt=show_prompt,
         is_replay=is_replay,
+        repo_path=Path(args.repo) if args.repo else None,
+        subset=args.subset,
     )
 
 

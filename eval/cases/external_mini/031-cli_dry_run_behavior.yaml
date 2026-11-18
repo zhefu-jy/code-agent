@@ -1,0 +1,13 @@
+id: "031"
+type: "behavior"
+question: "minisite 的命令行入口是如何处理 --dry-run 参数的？在 dry-run 模式下会执行哪些操作？"
+expected_files:
+  - "minisite/cli.py"
+  - "minisite/engine.py"
+expected_symbols:
+  - "run_cli"
+  - "discover_documents"
+is_unanswerable: false
+intent: "考察模型对外部工程 CLI 入参解析与仿真模拟分支逻辑的理解"
+source: "external_mini"
+note: "W7 W 外部工程参数解析用例"

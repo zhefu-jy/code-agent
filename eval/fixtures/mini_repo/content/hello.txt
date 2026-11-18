@@ -1,0 +1,7 @@
+@title: Hello World
+@type: post
+@date: 2026-11-18
+@tags: intro, python
+@status: published
+
+Welcome to minisite! This is the first test post.

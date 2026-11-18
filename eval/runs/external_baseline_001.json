@@ -1,0 +1,212 @@
+{
+  "meta": {
+    "total": 6,
+    "pass_rate": 83.33333333333334,
+    "retrieval_recall": 100.0,
+    "citation_valid_rate": 100.0,
+    "avg_latency": 1.9173176288604736,
+    "timestamp": 1795009804.939347
+  },
+  "cases": [
+    {
+      "id": "031",
+      "type": "behavior",
+      "question": "minisite 的命令行入口是如何处理 --dry-run 参数的？在 dry-run 模式下会执行哪些操作？",
+      "is_passed": true,
+      "retrieval_file_hit": true,
+      "file_hit": true,
+      "symbol_hit": true,
+      "citations_count": 5,
+      "valid_citations_count": 5,
+      "latency": 1.9593746662139893,
+      "fail_reason": "",
+      "answer": "在 `run_cli` 中，`--dry-run` 参数通过 `args.dry_run` 读取并判断；当该值为真时，程序只调用 `engine.discover_documents()` 发现文档，打印发现数量后直接返回 0，不会执行实际构建。[minisite/cli.py:48-76]\n\n具体流程如下：\n\n1. 先通过 `create_parser()` 创建解析器并解析命令行参数，`--dry-run` 的结果保存在 `args.dry_run` 中。[minisite/cli.py:50-51]\n2. 加载配置后，如果 `args.dry_run` 为真，则调用 `engine.discover_documents()` 获取文档列表。[minisite/cli.py:56-64]\n3. 随后打印 `[DRY-RUN] Discovered {len(docs)} document(s).`，并立即 `return 0`，因此不会调用 `engine.build()`，也不会生成任何页面。[minisite/cli.py:65-67]\n\n因此，dry-run 模式下执行的操作仅为：解析参数、加载配置、创建 `BuildEngine`、发现文档、打印文档数量并正常退出；实际构建与页面输出均被跳过。[minisite/cli.py:50-67]",
+      "subset": "external_mini",
+      "total_tokens": 937,
+      "system_status": "SUCCESS",
+      "evidence_validity": {
+        "citations_total": 5,
+        "citations_valid": 5,
+        "citations_in_context": 5,
+        "is_valid": true,
+        "evidence_supported": null
+      },
+      "answer_verdict": {
+        "verdict": "CORRECT",
+        "judge_source": "AUTO_RULE",
+        "fail_reasons": [],
+        "missing_files": [
+          "minisite/engine.py"
+        ],
+        "missing_symbols": [],
+        "human_note": ""
+      }
+    },
+    {
+      "id": "032",
+      "type": "location",
+      "question": "minisite 中的 Post 和 Page 类分别继承自哪个基类？它们是如何重写 render_html 方法的？",
+      "is_passed": true,
+      "retrieval_file_hit": true,
+      "file_hit": true,
+      "symbol_hit": true,
+      "citations_count": 7,
+      "valid_citations_count": 7,
+      "latency": 2.4232563972473145,
+      "fail_reason": "",
+      "answer": "根据参考资料，回答如下：\n\n**1. 继承的基类**\n\n`Page` 类继承自 `BaseItem` 基类 [minisite/models.py:33]。`Post` 类同样继承自 `BaseItem` 基类 [minisite/models.py:49]。此外，`minisite/engine.py` 的导入语句也印证了 `BaseItem`、`Page`、`Post` 均来自 `minisite.models` 模块 [minisite/engine.py:8]。\n\n**2. 对 `render_html` 方法的重写**\n\n`Page.render_html` 重写后返回一个独立的静态页面 HTML 字符串，结构为 `<article class=\"page\">`，内部包含 `<h1>` 标题和 `<div class=\"content\">` 正文（使用 `self.content_raw`）[minisite/models.py:37-44]。\n\n`Post.render_html` 重写后返回带元数据头部的文章 HTML 字符串，结构为 `<article class=\"post\">`，其 `<header>` 中包含 `<h1>` 标题、`<time>` 日期和 `<div class=\"tags\">` 标签列表，正文放在 `<div class=\"body\">` 中（使用 `self.content_raw`）[minisite/models.py:61-73]。其中日期通过 `self.created_at.strftime(\"%Y-%m-%d\")` 格式化，若 `created_at` 为空则显示 `\"Unknown date\"` [minisite/models.py:63]；标签则通过遍历 `self.tags` 生成 `<span class=\"tag\">#标签</span>` 并以空格连接 [minisite/models.py:64]。\n\n**补充说明**：关于 `BaseItem` 基类本身如何定义 `render_html`（是否为抽象方法等），所给参考资料中未包含 `BaseItem` 的类定义，因此**无依据**可作说明。",
+      "subset": "external_mini",
+      "total_tokens": 1169,
+      "system_status": "SUCCESS",
+      "evidence_validity": {
+        "citations_total": 7,
+        "citations_valid": 7,
+        "citations_in_context": 7,
+        "is_valid": true,
+        "evidence_supported": null
+      },
+      "answer_verdict": {
+        "verdict": "CORRECT",
+        "judge_source": "AUTO_RULE",
+        "fail_reasons": [],
+        "missing_files": [],
+        "missing_symbols": [],
+        "human_note": ""
+      }
+    },
+    {
+      "id": "033",
+      "type": "behavior",
+      "question": "validate_config 函数中定义了哪些校验规则？在什么情况下会抛出 ConfigError 异常？",
+      "is_passed": true,
+      "retrieval_file_hit": true,
+      "file_hit": true,
+      "symbol_hit": true,
+      "citations_count": 5,
+      "valid_citations_count": 5,
+      "latency": 2.090541124343872,
+      "fail_reason": "",
+      "answer": "根据参考资料，`validate_config` 函数定义了以下校验规则，并在对应情况下抛出 `ConfigError` 异常：\n\n1. **站点标题非空校验**：当 `config.title` 为空字符串或仅含空白字符（`not config.title.strip()`）时，抛出 `ConfigError`，消息为 \"Site title cannot be empty\"，并指定 `field_name=\"title\"`。[minisite/config.py:47-48]\n\n2. **主题合法性校验**：当 `config.theme` 不在 `SUPPORTED_THEMES` 列表中时，抛出 `ConfigError`，消息中包含不支持的主题名及支持的主题列表，并指定 `field_name=\"theme\"`。[minisite/config.py:50-54] 其中 `SUPPORTED_THEMES` 定义为 `[\"minimal\", \"classic\", \"dark\"]`。[minisite/config.py:11]\n\n3. **最大文章数正数校验**：当 `config.max_posts <= 0` 时，抛出 `ConfigError`，消息为 \"max_posts must be positive integer\"，并指定 `field_name=\"max_posts\"`。[minisite/config.py:56-57]\n\n此外，`ConfigError` 是 `MiniSiteError` 的子类，构造时固定使用错误码 `\"ERR_CONFIG\"`，并可选地记录 `field_name` 属性。[minisite/exceptions.py:15-20]",
+      "subset": "external_mini",
+      "total_tokens": 911,
+      "system_status": "SUCCESS",
+      "evidence_validity": {
+        "citations_total": 5,
+        "citations_valid": 5,
+        "citations_in_context": 5,
+        "is_valid": true,
+        "evidence_supported": null
+      },
+      "answer_verdict": {
+        "verdict": "CORRECT",
+        "judge_source": "AUTO_RULE",
+        "fail_reasons": [],
+        "missing_files": [],
+        "missing_symbols": [],
+        "human_note": ""
+      }
+    },
+    {
+      "id": "034",
+      "type": "behavior",
+      "question": "当内容源目录不存在时，BuildEngine.discover_documents 会抛出什么异常？",
+      "is_passed": true,
+      "retrieval_file_hit": true,
+      "file_hit": true,
+      "symbol_hit": true,
+      "citations_count": 2,
+      "valid_citations_count": 2,
+      "latency": 1.4076735973358154,
+      "fail_reason": "",
+      "answer": "当内容源目录不存在时，`BuildEngine.discover_documents` 会抛出 `SourceNotFoundError` 异常。该方法首先通过 `if not self.source_dir.is_dir():` 判断源目录是否为有效目录，若不成立则执行 `raise SourceNotFoundError(str(self.source_dir))` 抛出该异常。[minisite/engine.py:26-27] 该行为也在方法的文档字符串中明确声明为 `Raises: SourceNotFoundError: If source directory does not exist.` [minisite/engine.py:23-24]",
+      "subset": "external_mini",
+      "total_tokens": 966,
+      "system_status": "SUCCESS",
+      "evidence_validity": {
+        "citations_total": 2,
+        "citations_valid": 2,
+        "citations_in_context": 2,
+        "is_valid": true,
+        "evidence_supported": null
+      },
+      "answer_verdict": {
+        "verdict": "CORRECT",
+        "judge_source": "AUTO_RULE",
+        "fail_reasons": [],
+        "missing_files": [
+          "minisite/exceptions.py"
+        ],
+        "missing_symbols": [],
+        "human_note": ""
+      }
+    },
+    {
+      "id": "035",
+      "type": "behavior",
+      "question": "BuildEngine 在扫描文档时，是如何依据 SiteConfig.include_drafts 和文档的 is_published 状态来过滤草稿的？",
+      "is_passed": false,
+      "retrieval_file_hit": true,
+      "file_hit": true,
+      "symbol_hit": true,
+      "citations_count": 5,
+      "valid_citations_count": 5,
+      "latency": 2.134798765182495,
+      "fail_reason": "模型声明无依据拒答（检索未召回关键上下文或信息不足)",
+      "answer": "根据所提供的参考资料，无法回答该问题。\n\n参考资料中仅包含 `BuildEngine` 的类声明与文档字符串，未包含其文档扫描或过滤逻辑的实现：\n\n- `BuildEngine` 仅有类定义与一行文档字符串，没有 `discover_documents`、`build` 等方法的具体实现代码 [minisite/engine.py:11-13]。\n- `SiteConfig` 中确实定义了 `include_drafts: bool = False` 字段 [minisite/config.py:22]，并在 `to_dict` 中被序列化 [minisite/config.py:33]，但参考资料未展示任何读取该字段进行草稿过滤的代码。\n- `run_cli` 中仅在命令行参数 `args.include_drafts` 为真时将其覆盖为 `True` [minisite/cli.py:56-57]，随后调用 `engine.discover_documents()` [minisite/cli.py:62]，但 `discover_documents` 的内部实现未在参考资料中给出。\n- 参考资料中完全没有出现文档的 `is_published` 属性或相关字段。\n\n因此，关于 `BuildEngine` 如何依据 `SiteConfig.include_drafts` 与文档 `is_published` 状态过滤草稿的具体机制，**无依据**，不能据此推断或臆造实现细节。",
+      "subset": "external_mini",
+      "total_tokens": 1040,
+      "system_status": "SUCCESS",
+      "evidence_validity": {
+        "citations_total": 5,
+        "citations_valid": 5,
+        "citations_in_context": 5,
+        "is_valid": true,
+        "evidence_supported": null
+      },
+      "answer_verdict": {
+        "verdict": "UNRESOLVED_REFUSAL",
+        "judge_source": "HUMAN_REVIEW",
+        "fail_reasons": [
+          "模型声明无依据拒答（检索未召回关键上下文或信息不足)"
+        ],
+        "missing_files": [
+          "minisite/models.py"
+        ],
+        "missing_symbols": [],
+        "human_note": "人工核查归因：检索Top-3切块未包含discover_documents方法体，模型恪守无依据铁律诚实拒答，属检索召回瓶颈"
+      }
+    },
+    {
+      "id": "036",
+      "type": "boundary",
+      "question": "minisite 中用于将生成的静态页面上传到 AWS S3 存储桶的 S3Uploader 类是在哪个文件定义的？",
+      "is_passed": true,
+      "retrieval_file_hit": true,
+      "file_hit": true,
+      "symbol_hit": true,
+      "citations_count": 3,
+      "valid_citations_count": 3,
+      "latency": 1.4882612228393555,
+      "fail_reason": "",
+      "answer": "根据所提供的参考资料，无法确定 `S3Uploader` 类的定义位置。\n\n参考资料中仅包含三个文件的片段：`minisite/cli.py` 的导入部分 [minisite/cli.py:1-10]、`minisite/engine.py` 的导入部分 [minisite/engine.py:1-8]，以及 `minisite/config.py` 的配置加载与校验部分 [minisite/config.py:1-11]。这些片段中均未出现 `S3Uploader` 类，也未出现任何与 AWS S3 上传相关的实现或引用。\n\n因此，关于 `S3Uploader` 类在哪个文件定义，**无依据**。",
+      "subset": "external_mini",
+      "total_tokens": 673,
+      "system_status": "SUCCESS",
+      "evidence_validity": {
+        "citations_total": 3,
+        "citations_valid": 3,
+        "citations_in_context": 3,
+        "is_valid": true,
+        "evidence_supported": null
+      },
+      "answer_verdict": {
+        "verdict": "EXPECTED_REFUSAL",
+        "judge_source": "AUTO_RULE",
+        "fail_reasons": [],
+        "missing_files": [],
+        "missing_symbols": [],
+        "human_note": ""
+      }
+    }
+  ]
+}

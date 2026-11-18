@@ -1,0 +1,5 @@
+@title: About Minisite
+@type: page
+@status: published
+
+This is an about page describing minisite static builder.

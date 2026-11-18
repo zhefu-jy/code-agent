@@ -1,0 +1,13 @@
+id: "034"
+type: "behavior"
+question: "当内容源目录不存在时，BuildEngine.discover_documents 会抛出什么异常？"
+expected_files:
+  - "minisite/engine.py"
+  - "minisite/exceptions.py"
+expected_symbols:
+  - "discover_documents"
+  - "SourceNotFoundError"
+is_unanswerable: false
+intent: "考察对异常分支触发条件与自定义异常类型的理解"
+source: "external_mini"
+note: "W7 W 外部工程错误处理分支用例"
