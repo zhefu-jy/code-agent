@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Literal
 
 
+# 工程目录布局类型：
+# - "src":     标准 src 布局（业务源码集中在 <root>/src/ 下，如 src/code_agent/...）
+# - "flat":    平铺布局（业务源码直接放在工程根目录或根目录子包下，如 minisite/...）
+# - "unknown": 未识别布局（工程中未发现 src/ 下的 Python 文件，也无根目录有效源码）
 Layout = Literal["src", "flat", "unknown"]
 
 
@@ -164,8 +168,10 @@ def scan_project(project_root: str | Path) -> ProjectStructure:
         for path in files
     )
 
+    layout: Layout
+    source_roots: tuple[Path, ...]
     if has_src_python:
-        layout: Layout = "src"
+        layout= "src"
         source_roots = (src_dir,)
 
         if has_flat_python:
