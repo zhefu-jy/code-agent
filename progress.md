@@ -2,6 +2,37 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-19 (W8 S3 & W8 W · 依赖关系分析、内存符号索引与 CLI 透视命令)
+
+### 一、今天实际做了啥
+1. **写了 import 依赖分析（`src/code_agent/analyzer/import_analyzer.py` + `tests/test_import_analyzer.py`）**：
+   - 把代码里的 `import`、`from ... import ...`、别名 `as` 和相对导入（`.` / `..`）都解析出来，还原成模块之间谁依赖谁的有向图，还能区分项目内部模块和外部库。
+   - 专门注意了 `__init__.py` 和普通 `.py` 文件算相对导入时的层级区别。
+   - 遇到 `from x import *`、`importlib.import_module`、`__import__` 以及点号太多的越界相对导入，统一记到 `unresolved` 里，不静默丢掉。
+   - 写完 8 个单测后把 S3 代码先提交了一次（`9b2f544`）。
+2. **顺手补齐注释、修掉 1 个类型小问题**：
+   - 给 `project_scanner.py`、`symbol_extractor.py`、`import_analyzer.py`、`symbol_index.py` 的类属性、枚举值和函数参数补上了说明注释，省得过几天看不懂字段是干啥的。
+   - 在 `project_scanner.py` 补了 `layout` 和 `source_roots` 的类型注解，清掉了 `mypy` 最后 1 条报错。
+3. **做了内存总索引（`src/code_agent/analyzer/symbol_index.py` + `tests/test_symbol_index.py`）**：
+   - 把 S1（目录扫描）、S2（符号表）、S3（依赖图）串成一套，只扫一次目录就全部建好，并顺手记录构建耗时。
+   - 支持三级查符号（完整 FQN $\to$ 精确短名 $\to$ 子串兜底）、查单个模块的内部/外部依赖和谁依赖它，以及汇总所有 `unresolved`。
+   - 写好 5 个单测并修掉“子串查类名顺带拖出一堆方法”的小毛病。
+4. **给 CLI 加上三个静态透视命令（`src/code_agent/cli.py`）**：
+   - 新增 `/structure`、`/symbols <name>`、`/deps <module>`，直接从内存索引打印结果，不花钱调大模型。
+   - 补全了启动菜单提示，把 `/symbols` 和 `/deps` 的命令前缀边界也收紧了。
+5. **实跑验证与耗时基线**：
+   - `mypy src eval`：21 个源文件 0 报错；`pytest`：全量 95 个测试全部通过（13.04s）。
+   - `eval/fixtures/mini_repo` 实机跑通 `/structure`、`/symbols BuildEngine`、`/deps minisite.cli`：6 模块 / 37 符号 / 36 条边，直调建索引 7.84 ms（CLI 冷启动里 53.32 ms）。
+   - 当前工程 `.` 实测：19 模块 / 168 符号 / 176 条边，直调建索引 75.26 ms。
+
+### 二、今天聊到的问题（后续复习用）
+1. `__init__.py` 在 Python 包里到底有啥用？为什么它和普通 `.py` 文件算 `.` 和 `..` 相对导入时起点不一样？
+2. 光看 `from a.b import c` 这句代码，怎么分清 `c` 是子模块文件还是文件里的函数/类？
+3. 查 `/symbols runner` 时，为什么连 `TaskRunner.run` 也匹配出来反而不好用？什么时候才该去匹配完整路径？
+4. 一开始把导入分析写成一个一百多行、缩进四五层的函数时为什么又难懂又容易敲错缩进？拆成小函数好在哪？
+
+---
+
 ## 2026-11-19 (W8 S2 · AST 符号抽取支持范围与 unresolved 边界)
 
 ### 一、今日完成事项

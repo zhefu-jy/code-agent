@@ -2,6 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 from collections import Counter
+from code_agent.analyzer.symbol_index import SymbolIndex, build_symbol_index
 # 确保在任意工作目录下直接执行此脚本都能正确找到包
 src_dir = str(Path(__file__).resolve().parent.parent)
 if src_dir not in sys.path:
@@ -85,6 +86,115 @@ def handle_review(raw_arg: str,repo_root: Path) -> None:
     _render_review(report, total_lines, display_path)
 
 
+def handle_structure(symbol_index: SymbolIndex) -> None:
+    """确定性输出工程目录拓扑、模块清单、构建耗时与 unresolved 汇总。"""
+    st = symbol_index.structure
+    sym_u, imp_u = symbol_index.all_unresolved()
+    roots_text = ", ".join(r.as_posix() for r in st.source_roots) or "(无)"
+    print("=" * 64)
+    print(f"🏗️  [工程结构透视] {st.project_root.name}")
+    print(f"   • 布局类型: {st.layout} ｜ 源码根: {roots_text}")
+    print(
+        f"   • 文件统计: 💻 源码 {len(st.source_files)} ｜ "
+        f"🧪 测试 {len(st.test_files)} ｜ 📄 文档 {len(st.doc_files)} ｜ "
+        f"⚙️ 配置 {len(st.config_files)}"
+    )
+    print(
+        f"   • 符号索引: {len(symbol_index.dependency_graph.modules)} 个模块 ｜ "
+        f"{len(symbol_index.symbol_table.symbols)} 个符号 ｜ "
+        f"{len(symbol_index.dependency_graph.edges)} 条导入边 ｜ "
+        f"耗时 {symbol_index.build_duration_ms:.2f} ms"
+    )
+    print(f"   • 未解析边界: AST 符号 {len(sym_u)} 项 ｜ Import 依赖 {len(imp_u)} 项")
+    if st.warnings:
+        print("   ⚠️ 扫描告警:")
+        for w in st.warnings:
+            print(f"      - {w}")
+    print("-" * 64)
+    print("📦 内部模块清单:")
+    for mod in symbol_index.dependency_graph.modules:
+        mod_sym_count = len(symbol_index.symbols_in_module(mod))
+        print(f"   - {mod} ({mod_sym_count} 个符号)")
+    print("=" * 64 + "\n")
+
+
+def handle_symbols(raw_arg: str, symbol_index: SymbolIndex) -> None:
+    """确定性查询符号定义位置、物理行号与签名。"""
+    query = raw_arg.strip()
+    if not query:
+        print("⚠️ 用法: /symbols <符号名或FQN>，例如 /symbols BuildEngine 或 /symbols stream_ask\n")
+        return
+    res = symbol_index.lookup_symbol(query)
+    if res.match_mode == "none":
+        print(f"🔍 未找到匹配 '{query}' 的静态符号。\n")
+        return
+    mode_label = {
+        "exact_fqn": "精确全限定名命中",
+        "exact_name": "精确短名命中",
+        "substring": "子串模糊命中",
+    }.get(res.match_mode, res.match_mode)
+    print("=" * 64)
+    print(f"🔎 [符号查询] '{res.query}'（{mode_label}，共 {len(res.matches)} 项）")
+    print("=" * 64)
+    for idx, sym in enumerate(res.matches, 1):
+        print(f"[{idx}] [{sym.kind}] {sym.fqn}")
+        print(f"    📁 {sym.file_path.as_posix()}:{sym.start_line}-{sym.end_line}")
+        if sym.signature:
+            print(f"    ✍️  签名: {sym.signature}")
+        if sym.bases:
+            print(f"    🧬 基类: {', '.join(sym.bases)}")
+    print("-" * 64 + "\n")
+
+def handle_deps(raw_arg: str, symbol_index: SymbolIndex) -> None:
+    """确定性透视指定模块的出入向依赖关系及未解析导入。"""
+    module_name = raw_arg.strip()
+    if not module_name:
+        print("⚠️ 用法: /deps <模块全名>，例如 /deps code_agent.cli 或 /deps minisite.cli\n")
+        return
+    summary = symbol_index.inspect_module_deps(module_name)
+    if not summary.exists:
+        print(f"⚠️ 未在工程内部模块中找到 '{module_name}'。")
+        sample = ", ".join(symbol_index.dependency_graph.modules[:8])
+        if sample:
+            print(f"   💡 可用模块示例: {sample}")
+        print()
+        return
+    print("=" * 64)
+    print(f"🕸️  [模块依赖透视] {summary.module_name}")
+    print("=" * 64)
+    print("➡️  内部依赖 (Internal):")
+    if summary.internal_dependencies:
+        for dep in summary.internal_dependencies:
+            print(f"   - {dep}")
+    else:
+        print("   (无)")
+    print("🌐 外部依赖 (External):")
+    if summary.external_dependencies:
+        for dep in summary.external_dependencies:
+            print(f"   - {dep}")
+    else:
+        print("   (无)")
+    print("⬅️  被谁依赖 (Dependents):")
+    if summary.dependents:
+        for src in summary.dependents:
+            print(f"   - {src}")
+    else:
+        print("   (无)")
+    if summary.outgoing_edges:
+        print("📌 导入明细:")
+        for edge in summary.outgoing_edges:
+            member = f".{edge.imported_name}" if edge.imported_name else ""
+            alias = f" as {edge.alias}" if edge.alias else ""
+            tag = "内部" if edge.is_internal else "外部"
+            print(f"   - L{edge.line_number} [{tag}] {edge.target_module}{member}{alias}")
+    if summary.unresolved_in_module:
+        print("⚠️ 该模块存在未解析导入 (unresolved):")
+        for item in summary.unresolved_in_module:
+            loc = f"L{item.line_number}" if item.line_number else "L?"
+            print(f"   - {loc} [{item.reason_code}] {item.detail}")
+    print("=" * 64 + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Code-Agent 智能代码与规范交互终端")
     parser.add_argument("--repo", "-r", type=str, default=".", help="目标工程根目录 (默认为当前目录)")
@@ -99,6 +209,7 @@ def main() -> None:
     print("=" * 64)
     print(f"📦 正在为目标工程构建检索索引: {repo_root} ...")
     retriever = build_retriever_for_project(repo_root, retriever_type=args.retriever)
+    symbol_index = build_symbol_index(repo_root)
     code_count = sum(1 for c in retriever.chunks if c.source_type == "code")
     doc_count = sum(1 for c in retriever.chunks if c.source_type == "doc")
 
@@ -109,6 +220,9 @@ def main() -> None:
     print("  - 普通提问：直接输入问题（基于目标工程自动检索并给出带行号依据的回答）")
     print("  - 检索代码：输入 /search <关键词/语义意图> (例如: /search stream_ask)")
     print("  - 审查文件：输入 /review <文件路径> (例如: /review src/code_agent/cli.py)")
+    print("  - 工程结构：输入 /structure (查看布局、模块清单与构建耗时)")
+    print("  - 符号查询：输入 /symbols <符号名或FQN> (例如: /symbols BuildEngine)")
+    print("  - 模块依赖：输入 /deps <模块全名> (例如: /deps minisite.cli)")
     print("  - 退出程序：输入 exit")
     print("=" * 64 + "\n")
 
@@ -166,6 +280,15 @@ def main() -> None:
         # 2. 拦截 /review 命令
         if input_question.startswith("/review"):
             handle_review(input_question[len("/review"):].strip(), repo_root=repo_root)
+            continue
+        if input_question == "/structure":
+            handle_structure(symbol_index)
+            continue
+        if input_question == "/symbols" or input_question.startswith("/symbols "):
+            handle_symbols(input_question[len("/symbols"):].strip(), symbol_index)
+            continue
+        if input_question == "/deps" or input_question.startswith("/deps "):
+            handle_deps(input_question[len("/deps"):].strip(), symbol_index)
             continue
         # 3. 普通提问：直接交由统一业务内核 execute_query 处理
         print("Agent 正在分析并检索代码 ...\n")

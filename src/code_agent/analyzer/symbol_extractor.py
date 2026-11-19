@@ -4,11 +4,33 @@ from pathlib import Path
 from typing import Literal
 from code_agent.analyzer.project_scanner import ProjectStructure, scan_project
 
+# AST 抽取支持的符号实体类别：
+# - "module":   顶层模块（对应 .py 文件或包的 __init__.py）
+# - "class":    顶层类定义（ClassDef）
+# - "function": 顶层独立函数 / 异步函数（FunctionDef / AsyncFunctionDef）
+# - "method":   类内部定义的方法 / 异步方法
+# - "constant": 顶层模块级赋值或带类型注解的变量/常量
 SymbolKind = Literal["module", "class", "function", "method", "constant"]
 
 @dataclass(frozen=True)
 class SymbolInfo:
-    """单个代码实体的结构化符号信息。"""
+    """
+    单个代码实体的结构化符号信息。
+
+    Attributes:
+        fqn: 全局唯一全限定名（如 "minisite.engine.BuildEngine.build"）。
+        name: 实体短名称（如 "build"）。
+        kind: 符号类别（module / class / function / method / constant）。
+        module_name: 所属模块的点分全名（如 "minisite.engine"）。
+        file_path: 定义所在的源码文件相对路径（相对于工程根目录）。
+        start_line: 定义起始物理行号（1-based）。
+        end_line: 定义结束物理行号（1-based，含方法体/类体末尾）。
+        signature: 函数或方法的参数与返回值签名（由 ast.unparse 还原，如 "async (self, x: int) -> str"）；
+            对于 module / class / constant 为 None。
+        bases: 类的基类表达式文本元组（如 ("BaseItem",)）；非类符号为空元组 ()。
+        parent_fqn: 直接父级作用域的全限定名（方法指向所属类 FQN，顶层成员指向模块名）；
+            对于 module 自身为 None。
+    """
     fqn: str
     name: str
     kind: SymbolKind
@@ -22,7 +44,21 @@ class SymbolInfo:
 
 @dataclass(frozen=True)
 class UnresolvedItem:
-    """超出静态 AST 解析范围或无法确定归属的边界记录。"""
+    """
+    超出静态 AST 解析范围或无法确定归属的边界记录。
+
+    Attributes:
+        file_path: 触发边界记录的源码文件（或命名空间包目录）相对路径。
+        module_name: 所属模块（或包）的点分名称。
+        reason_code: 机器可读的未解析原因码，当前支持：
+            namespace_package / complex_inheritance / nested_class /
+            dynamic_all_export / all_reexport / conditional_definition /
+            dynamic_setattr / read_error / syntax_error。
+        detail: 面向人工或下游 Agent 的可读情况说明。
+        start_line: 触发位置的起始物理行号；目录级或读取失败时为 None。
+        end_line: 触发位置的结束物理行号；无行范围时为 None。
+        symbol_name: 涉及的具体符号名或 FQN（如 "__all__"、"app.models.Target"）；无特定符号时为 None。
+    """
     file_path: Path
     module_name: str
     reason_code: str
@@ -33,24 +69,55 @@ class UnresolvedItem:
 
 @dataclass(frozen=True)
 class SymbolTable:
-    """工程级确定性符号表与未解析清单。"""
+    """
+    工程级确定性符号表与未解析清单。
+
+    Attributes:
+        project_root: 工程根目录绝对路径。
+        symbols: 按文件路径、起始行号、FQN 确定性排序的全部已知符号元组。
+        unresolved: 按文件路径、行号、原因码确定性排序的未解析边界记录元组。
+    """
     project_root: Path
     symbols: tuple[SymbolInfo, ...]
     unresolved: tuple[UnresolvedItem, ...]
 
     def get_by_fqn(self, fqn: str) -> SymbolInfo | None:
-        """按全限定名精确查找符号。"""
+        """
+        按全限定名精确查找符号。
+
+        Args:
+            fqn: 目标符号的完整全限定名（如 "minisite.engine.BuildEngine"）。
+
+        Returns:
+            匹配到的 SymbolInfo；不存在则返回 None。
+        """
         for symbol in self.symbols:
             if symbol.fqn == fqn:
                 return symbol
         return None
 
     def find_by_name(self, name: str) -> tuple[SymbolInfo, ...]:
-        """按短名称查找所有同名符号。"""
+        """
+        按短名称查找所有同名符号。
+
+        Args:
+            name: 符号短名称（如 "build" 或 "main"）。
+
+        Returns:
+            所有短名匹配的 SymbolInfo 元组（可能跨多个模块或类）。
+        """
         return tuple(symbol for symbol in self.symbols if symbol.name == name)
 
     def symbols_in_file(self, file_path: Path | str) -> tuple[SymbolInfo, ...]:
-        """获取指定相对路径文件内的全部符号。"""
+        """
+        获取指定相对路径文件内的全部符号。
+
+        Args:
+            file_path: 相对于 project_root 的文件路径（支持 Path 或字符串）。
+
+        Returns:
+            落在该文件内的所有 SymbolInfo 元组。
+        """
         target = Path(file_path).as_posix()
         return tuple(
             symbol for symbol in self.symbols if symbol.file_path.as_posix() == target

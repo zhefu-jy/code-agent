@@ -669,8 +669,27 @@
 * **实跑踩坑**：利用 `ast.unparse(node.args)` 还原函数签名时，带默认值的参数会被渲染为 `suffix: str='ok'`（等号两侧无空格），编写签名断言时需以 `ast.unparse` 标准输出为准。
 * **非标准工程结构的解耦边界**：若外部项目采用 `backend/app/main.py` 等非标准目录，S1 自动猜测布局会把 `source_roots` 设为 `.`，导致模块名误算为 `backend.app.main`。但 S2 本身通过 `source_roots: tuple[Path, ...]` 参数化剥离前缀，未写死目录结构；后续只需让 S1 支持读取 `pyproject.toml` 配置或外部显式指定 `source_roots`，S2 即可无缝适配任意非标准布局。
 
+---
 
+## 十六、W8 S3 & W8 W 踩坑和顺手记住的点
 
+### 1. 算相对导入时，`__init__.py` 和普通文件不能用同一套规则截路径
+* **遇到的问题**：`from . import x` 里的一个点 `.`，在普通文件里和在 `__init__.py` 里代表的包层级其实不一样。
+* **坑在哪里**：
+  - 在 `pkg/sub/a.py` 里，模块名是 `pkg.sub.a`，`.` 表示去掉最后的文件名 `a`，回到它所在的包 `pkg.sub`。
+  - 但在 `pkg/sub/__init__.py` 里，模块名本身就已经是 `pkg.sub` 了；这时候 `.` 指的还是 `pkg.sub` 自己，不是再往上退一层变成 `pkg`。如果全按模块名砍掉最后一段，就会平白少掉一层包名。
+  - 另外如果点号数量超过了当前包的深度，必须老老实实记成 `relative_import_overflow`，不能硬裁。
+* **怎么解决**：算模块名时顺手带出一个 `is_package` 布尔值，决定是从 `module_parts` 还是 `module_parts[:-1]` 开始往回退。
 
+### 2. 长函数缩进太深，人看着晕、手敲必错
+* **遇到的问题**：第一版把解析 `import`、`from ... import ...` 和抓动态导入全塞进了一个 160 行的大函数里，缩进到四五层，结果自己敲的时候直接把代码缩进了错误的 `else:` 和 `for` 循环里面，而且读起来很费劲。
+* **怎么解决**：把 `from ... import ...` 拆成 `_extract_from_import`，把抓动态导入拆成 `_check_dynamic_import_call`，每个函数控制在二三十行、最多两层缩进，结构马上清楚了，缩进 bug 也没再出现。
 
+### 3. 模糊查符号时，别随手去匹配包含类名的全路径
+* **遇到的问题**：写 `test_lookup_symbol_levels` 时查 `"runner"`，本来只想找 `TaskRunner` 这个类，结果把类里面的 `app.b.TaskRunner.run` 方法也一并返回了，导致单测失败。
+* **坑在哪里**：子串兜底写成了 `needle in sym.name.lower() or needle in sym.fqn.lower()`。因为方法全限定名里带着类名，搜类名关键词就会把一个类下面十几二十个方法全刷出来。
+* **怎么解决**：看查询词里有没有 `.`——没带 `.` 时只匹配短名 `sym.name`，用户明确敲了带 `.` 的片段（比如 `engine.build`）再去匹配完整的 `sym.fqn`。
+
+### 4. 数据类的字段和传参注释真的不能省
+* **体会**：像 `Layout` 里的 `src`/`flat`/`unknown`，或者 `ImportEdge` 里的 `is_relative`/`is_internal`，刚写完那会儿自己脑子里还热乎，过两天再看或者放到别的模块里调用，很容易忘掉每个字段到底是啥意思、传什么进去。把字段说明和 `Args:` / `Returns:` 写清楚，代码读起来会轻松很多。
 
