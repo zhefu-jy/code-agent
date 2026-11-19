@@ -651,6 +651,25 @@
 * 项目使用 `code-agent` Conda 环境运行 pytest；系统 base 环境不代表项目依赖环境。
 * `test_trace.py` 的非 Git 目录测试要求 pytest 临时目录位于仓库外。若临时目录放在当前 Git 仓库内，`git -C` 会正确继承上级仓库信息，测试结果就会偏离用例意图。
 
+---
+
+## 十五、W8 S2 AST 符号抽取与 `unresolved` 边界
+
+### 1. 为什么已有 `ast_chunker.py` 还要做 `symbol_extractor.py`？
+* **定位完全不同**：`index/ast_chunker.py` 的目标是“按语法边界切分文本卡片”喂给检索与大模型，遇到解析异常允许静默回退到滑动窗口切块；`analyzer/symbol_extractor.py` 的目标是构建确定性代码实体户口本，供后续依赖图（W8 S3）、符号读取工具（W9）与调查 Agent（W10）做精确跳转和事实核验。
+* **核心差异**：`symbol_extractor.py` 必须结合 S1 `source_roots` 计算全局唯一 FQN，区分模块/类/方法/函数/常量父子层级，并且遇到超出能力的动态/复杂语法时**严禁静默丢弃**，必须记入 `UnresolvedItem`。
+
+### 2. 三层数据契约与 `unresolved` 标记原则
+* `SymbolInfo`：单实体档案卡片，记录 `fqn`、`kind`、`module_name`、`file_path`、起止行号、`signature`、`bases` 与 `parent_fqn`。
+* `UnresolvedItem`：显式异常便签，使用结构化 `reason_code`（`namespace_package`、`complex_inheritance`、`all_reexport`、`dynamic_all_export`、`dynamic_setattr`、`nested_class`、`conditional_definition`、`syntax_error`、`read_error`）记录超出静态边界的位置与原因。
+* **保留实体 + 附加警示**：对于多重继承（含 `(str, Enum)`）或泛型/动态基类，类本身及其方法照常收录进 `SymbolTable`，同时额外追加 `complex_inheritance` 警示，避免既丢失类实体又掩盖 MRO 未展开的风险。
+* **减少噪音守卫**：顶层 `if __name__ == "__main__":` 入口守卫在扫描控制流时主动豁免，避免常规 CLI 文件被误报为 `conditional_definition`。
+
+### 3. `ast.unparse` 细节与目录结构解耦反思
+* **实跑踩坑**：利用 `ast.unparse(node.args)` 还原函数签名时，带默认值的参数会被渲染为 `suffix: str='ok'`（等号两侧无空格），编写签名断言时需以 `ast.unparse` 标准输出为准。
+* **非标准工程结构的解耦边界**：若外部项目采用 `backend/app/main.py` 等非标准目录，S1 自动猜测布局会把 `source_roots` 设为 `.`，导致模块名误算为 `backend.app.main`。但 S2 本身通过 `source_roots: tuple[Path, ...]` 参数化剥离前缀，未写死目录结构；后续只需让 S1 支持读取 `pyproject.toml` 配置或外部显式指定 `source_roots`，S2 即可无缝适配任意非标准布局。
+
+
 
 
 

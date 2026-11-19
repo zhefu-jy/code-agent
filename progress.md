@@ -2,6 +2,23 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-19 (W8 S2 · AST 符号抽取支持范围与 unresolved 边界)
+
+### 一、今日完成事项
+1. **完成新机器开发环境与 Git 推送链路核验**：在新电脑验证 GitHub OAuth 凭据持久化、局部仓库邮箱配置（`1584504718@qq.com`）及临时分支 `commit` / `push` / 清理全流程。
+2. **实现 AST 符号抽取器**：新增 `src/code_agent/analyzer/symbol_extractor.py`，定义不可变契约 `SymbolInfo`、`UnresolvedItem` 与 `SymbolTable`，结合 S1 `ProjectStructure.source_roots` 还原模块名与全限定名（FQN）。
+3. **落盘支持范围与签名提取**：提取顶层模块、类（含基类）、顶层函数、类方法（含 `async`）及顶层常量，利用 `ast.unparse` 生成函数/方法参数及返回值签名，记录物理起止行号与 `parent_fqn`。
+4. **实现 `unresolved` 诚实边界机制**：显式标记 PEP 420 命名空间包、`__all__` 跨模块重导出与动态修改、多重/动态基类继承、动态 `setattr`、嵌套类、条件/控制流内定义（自动放过 `if __name__ == "__main__":`）以及读取/语法异常，严禁静默丢弃。
+5. **编写单测与临时机验证**：新增 `tests/test_symbol_extractor.py`（按主力机标准 `pytest` 规范编写）。在当前原生 Python 3.14.2（无 Conda/pytest/mypy）环境下完成 `py_compile`、最小 `pytest` 桩驱动实跑（`symbol_extractor` 16 项分支通过、`project_scanner` 8 项通过）与真实工程抽取验证（当前仓库 140 符号 / 8 unresolved，`eval/fixtures/mini_repo` 37 符号 / 0 unresolved）；正式全量 `pytest` 与 `mypy` 待回主力机补跑。
+
+### 二、今日有价值提问清单（复习索引）
+1. 为什么在已有 `index/ast_chunker.py` 使用 AST 解析的前提下，W8 S2 还要独立构建 `symbol_extractor.py`？两者目标与契约有何本质区别？
+2. 当前 S1 + S2 的设计是否过度假设了标准 `src/` 与 `flat` 结构？面对非标准目录布局（如 `backend/` 或混合目录）会出现什么问题，如何解耦？
+3. `symbol_extractor.py` 中 `SymbolInfo`、`UnresolvedItem` 与 `SymbolTable` 各自承担什么职责，抽取流水线如何分步协作？
+4. 在缺少 Conda 虚拟环境的临时机器上开发 W8 模块时，静态分析代码与全量测试各自的验证边界在哪里？
+
+---
+
 ## 2026-11-18 (W8 S1 · 工程目录结构与文件拓扑识别)
 
 ### 一、今日完成事项
