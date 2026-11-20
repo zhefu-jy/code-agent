@@ -693,3 +693,23 @@
 ### 4. 数据类的字段和传参注释真的不能省
 * **体会**：像 `Layout` 里的 `src`/`flat`/`unknown`，或者 `ImportEdge` 里的 `is_relative`/`is_internal`，刚写完那会儿自己脑子里还热乎，过两天再看或者放到别的模块里调用，很容易忘掉每个字段到底是啥意思、传什么进去。把字段说明和 `Args:` / `Returns:` 写清楚，代码读起来会轻松很多。
 
+---
+
+## 十七、W9 探查工具箱与调用契约避坑
+
+### 1. `ClassName.method` 查询被 `lookup_symbol` 当成宽泛子串误拦
+* **遇到的问题**：跑 `test_find_references_attribute_access_and_scope_filters` 时，调用 `find_references("Service.execute")` 返回 0 条命中，提示“相似符号候选：`demo.service.Service.execute`”。
+* **坑在哪里**：`SymbolIndex.lookup_symbol` 只有三档：`exact_fqn`（完整 `demo.service.Service.execute`）、`exact_name`（短名 `execute`）、`substring`（带点片段模糊包含）。外部调用方和模型最常用的 `ClassName.method` 既不是完整 FQN 也不是纯短名，直接落进了 `substring` 档，被防误扫守卫误拦。
+* **怎么解决**：在 `reference_tools.py` 中增加 `_resolve_target_symbols`：除 `exact_fqn`/`exact_name` 外，对含 `.` 的查询做**点分后缀精确匹配**（`sym.fqn.endswith(f".{cleaned}")`），既精准命中 `Service.execute`，又不放过 `Serv.exec` 这类半截拼写。
+
+### 2. 工具入参校验与 Python 类型系统的三个小暗礁
+* **`dict` 不变性导致游标类型不兼容**：`code_reader.py` 的 `next_cursor` 是 `dict[str, int] | None`，若 `ToolResult.next_cursor` 写成 `dict[str, str | int] | None`，`mypy` 会报错（`dict` 值类型不变）。改用协变的只读抽象 `Mapping[str, str | int] | None` 即可无损兼容。
+* **`isinstance(True, int)` 是 `True`**：Python 中 `bool` 继承自 `int`。在 `ToolBox` 校验 JSON Schema 的 `integer` 参数时，若不写 `not isinstance(value, bool)`，模型传 `start_line=True` 就会蒙混过关并被当成 `1`。
+* **`PurePosixPath.match("src/**/*.py")` 的版本差异**：不同 Python 版本对 `**/` 匹配零层目录（`src/a.py`）存在差异。在 `search_tools.py` 中显式转成正则 `_glob_to_regex` 处理 `**/` 为 `(?:.*/)?`，确保在 Python 3.12 主力机与 3.14 开发机行为完全一致。
+
+### 3. 静态引用扫描的真实覆盖边界（不吹牛的理由）
+* **现象**：在本仓库对 `execute_query` 运行 `find_references` 时，准确找出了 `src/code_agent/cli.py:295` 与 `tests/` 下的 3 处调用，但同样调用了 `execute_query` 的 `eval/run_eval.py` 没有出现。
+* **原因**：W8 S1 的 `scan_project` 仅把 `src/` 归为 `source_files`、`tests/` 归为 `test_files`，评测与脚本目录 `eval/`、`scripts/` 不在其扫描集合内。
+* **认知沉淀**：任何静态工具都有声明好的覆盖范围与解析边界，在工具 `note` 中明示“不承诺已找出全部调用点”，比虚假承诺“全仓 100% 找全”可靠得多。
+
+

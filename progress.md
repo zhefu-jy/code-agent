@@ -2,6 +2,36 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-20 (W9 S1~W · 代码探查工具箱、统一返回契约与 Tool Calling 闭环)
+
+### 一、今日实际做了啥
+1. **统一返回契约与 W9 S1 对齐（`src/code_agent/tools/base.py`）**：
+   - 定义泛型不可变契约 `ToolResult[T]` 与 `tool_error()`，统一承接成功载荷、截断标记、`remaining_count`、`next_cursor` 与错误码。
+   - 为 W9 S1 的 `read_file_snippet`（`code_reader.py`）和 `lookup_symbol`（`symbol_tools.py`）提供零破坏适配器 `adapt_code_snippet` 与 `adapt_symbol_lookup`。
+2. **受控文本/正则搜索工具（`src/code_agent/tools/search_tools.py` + `tests/test_search_tools.py`）**：
+   - 实现 `search_text`，覆盖 `.py` 源码、`.md` 设计文档及配置文件，支持字面/正则、大小写、`file_pattern` 与 `exclude_patterns`。
+   - 落地四重预算防御（`max_per_file=5`、`max_results=30`、`max_chars=3000`、`max_line_chars=200`）与 `offset` 分页续读，自动跳过忽略目录、符号链接、超限体积、二进制与非 UTF-8 文件。
+   - 编写 8 项单测；本仓库实测搜 `def execute_query` 耗时 `83.81 ms`（扫描 109 个文件），搜高频词 `"def "`（`src/**/*.py`）耗时 `26.70 ms` 并按单文件上限正确截断分页。
+3. **候选引用查找工具（`src/code_agent/tools/reference_tools.py` + `tests/test_reference_tools.py`）**：
+   - 实现 `find_references`，结合 `SymbolIndex` 与 AST 扫描补齐同文件调用与跨文件调用，按 `ReferenceConfidence` 四级可信度分级（`SAME_FILE_CALL` / `EXPLICIT_IMPORT_CALL` / `ATTRIBUTE_ACCESS` / `UNRESOLVED`），并标明 `source` / `test` 范围。
+   - 修复 `ClassName.method` 查询落入子串匹配被拦截的问题（增加点分后缀精确匹配 `_resolve_target_symbols`），编写 7 项单测。
+   - 实测：`mini_repo` 查 `BuildEngine.discover_documents` 精准命中同文件 `minisite/engine.py:89` 与跨文件 `minisite/cli.py:63`；本仓库查 `execute_query` 命中 `cli.py:295` 与 3 处 `tests/` 调用。
+4. **Tool Calling Schema 与手动组合探查实验（`src/code_agent/tools/registry.py` + `scripts/manual_investigate.py` + `tests/test_tool_registry.py`）**：
+   - 导出 4 个标准 Function Calling JSON Schema（不暴露宿主 `project_root` 与 `symbol_index`），实现 `ToolBox` 参数校验（含 `bool` 冒充 `int` 拦截）、索引缓存复用与 `serialize_tool_result`。
+   - 运行 `scripts/manual_investigate.py`：以 10 步工具调用跑通 `mini_repo` Case 035（跨模块草稿过滤链，含 4 页游标续读演示）并验证 6 类结构化异常拦截；编写 4 项单测。
+5. **当前机验证情况**：
+   - 当前开发机缺少 `pytest` 与 `mypy`，已通过 Python 临时驱动实跑 W9 S1~W 全部 30 项工具箱单测（`test_code_reader` 6 + `test_symbol_tools` 5 + `test_search_tools` 8 + `test_reference_tools` 7 + `test_tool_registry` 4）全部通过，正式 `pytest` 与 `mypy src eval` 待回主力机补跑。
+
+### 二、今天聊到的问题（后续复习用）
+1. `search_text` 是只搜 `.py` 代码，还是同时覆盖 `.md` 设计方案文档与配置文件？既然搜 `.md`，为什么不会像 W6 那样因过程文档变成“词法磁铁”而淹没源码？
+2. 当用户问“今天天气怎么样”这种完全无关的问题时，当前单轮 RAG 系统与后续 ReAct 调查循环分别会返回什么，如何避免空转烧预算？
+3. 当用户问“给我介绍一下这个项目”时，ReAct 循环能否把整体核心代码全部读完？如何用“W8 静态骨架 + 有限步主干精读 + 证据缺口划界”解决？
+4. `find_references` 是用来查询依赖关系的吗？四级可信度枚举（`SAME_FILE_CALL` / `EXPLICIT_IMPORT_CALL` / `ATTRIBUTE_ACCESS` / `UNRESOLVED`）各自有什么工程作用？
+5. 什么是“静态符号表”，什么是“动态定义”？为什么查不到定义时不能盲目全仓匹配？
+6. `find_references` 的入参为什么必须设计成 `symbol_name: str`，而不是传 `SymbolMatchItem` 对象？
+
+---
+
 ## 2026-11-19 (W8 S3 & W8 W · 依赖关系分析、内存符号索引与 CLI 透视命令)
 
 ### 一、今天实际做了啥
