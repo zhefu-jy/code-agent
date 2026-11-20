@@ -20,6 +20,13 @@ from code_agent.tools.reference_tools import (
     find_references,
 )
 
+from code_agent.tools.registry import (
+    ToolBox,
+    ToolSpec,
+    get_tool_schemas,
+    serialize_tool_result,
+)
+
 __all__ = [
     "CodeSnippetResult",
     "SearchTextData",
@@ -37,4 +44,8 @@ __all__ = [
     "ReferenceConfidence",
     "ReferenceItem",
     "find_references",
+    "ToolBox",
+    "ToolSpec",
+    "get_tool_schemas",
+    "serialize_tool_result",
 ]
