@@ -13,6 +13,12 @@ from code_agent.tools.symbol_tools import (
     SymbolMatchItem,
     lookup_symbol,
 )
+from code_agent.tools.reference_tools import (
+    FindReferencesData,
+    ReferenceConfidence,
+    ReferenceItem,
+    find_references,
+)
 
 __all__ = [
     "CodeSnippetResult",
@@ -27,4 +33,8 @@ __all__ = [
     "read_file_snippet",
     "search_text",
     "tool_error",
+    "FindReferencesData",
+    "ReferenceConfidence",
+    "ReferenceItem",
+    "find_references",
 ]
