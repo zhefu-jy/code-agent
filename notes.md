@@ -712,4 +712,24 @@
 * **原因**：W8 S1 的 `scan_project` 仅把 `src/` 归为 `source_files`、`tests/` 归为 `test_files`，评测与脚本目录 `eval/`、`scripts/` 不在其扫描集合内。
 * **认知沉淀**：任何静态工具都有声明好的覆盖范围与解析边界，在工具 `note` 中明示“不承诺已找出全部调用点”，比虚假承诺“全仓 100% 找全”可靠得多。
 
+---
+
+## 十八、W10 S1 调查循环与预算守卫避坑
+
+### 1. 批处理多 `tool_calls` 中途触顶不能直接 `break` 丢弃 `call_id`
+* **遇到的问题**：模型单轮并行吐出多个 `tool_calls` 时，若执行到中途耗尽 `max_tool_calls`，直接跳出循环会导致部分 `tool_call_id` 没有对应的 `ToolMessage`。
+* **坑在哪里**：OpenAI / DeepSeek Chat Completions 协议强制要求 `AIMessage` 中的每一个 `tool_call_id` 后都必须紧跟对应的 `ToolMessage`；一旦缺漏，后续调用预留总结模型时会直接报 400 协议错误。
+* **怎么解决**：在 `Investigator.run()` 的工具循环内，对预算耗尽后剩余的 `call_id` 不实际调度 `ToolBox`，而是补发一条 `error_code="budget_exhausted"` 的合成 `ToolMessage`，兼顾硬拦截与消息协议完整。
+
+### 2. 探查预算与总结预留必须双水位线分离，且总结时须摘掉工具绑定
+* **坑在哪里**：
+  - 若把 `max_turns` 或 Token 全用于探查，撞限退出时已无余量让模型做阶段性归纳；
+  - 若总结阶段仍用 `bound_model`（带工具 Schema），模型仍可能再次发起 `tool_calls`，导致预算收口失控。
+* **怎么解决**：在 `InvestigationBudget` / `BudgetTracker` 中划分两道水位线：先用 `explore_*` 水位线停止探查，再用裸 `self.model.invoke`（不调用 `bind_tools`）完成收口总结；若总上限已被击穿或模型抛出异常，则由 `_build_programmatic_fallback()` 确定性汇总已有观测与缺口，绝不再发起模型请求。
+
+### 3. `ChatModelLike(Protocol)` 兼顾离线 Mock 与 `mypy` 严格校验
+* **坑在哪里**：`stream_ask` 写死 `BaseChatModel` 会迫使测试替身继承 Pydantic 重基类；`execute_query` 退回 `Optional[Any]` 又完全失去了静态检查。
+* **怎么解决**：在 `investigator.py` 中声明最小结构协议 `ChatModelLike(Protocol)`（仅约定 `invoke` 与 `bind_tools`），运行期依然直调 `get_chat_model()` 返回的真实 `ChatDeepSeek`；同时 `bind_tools` 的 `tools` 参数需对齐 `BaseChatModel` 源码标注为 `Sequence[dict[str, Any]]`（而非更宽的 `Mapping`），防止参数逆变导致真实模型反而通不过 `mypy` 校验。
+
+
 

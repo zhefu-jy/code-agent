@@ -2,6 +2,25 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-23 (W10 S1 · 主力机待办补验、原生 ReAct 调查循环与多维预算守卫)
+
+### 一、今日实际做了啥
+1. **清理主力机待办验证（`docs/主力环境代办.md`）**：
+   - 在 Conda `code-agent`（Python 3.12.14）环境中补跑 W9 S1 单测（`pytest tests/test_code_reader.py tests/test_symbol_tools.py -v`：11 passed）、`mypy src eval`（28 files 0 issues）、全仓回归（125 passed）以及 `eval/fixtures/mini_repo` 与本仓库的 `build_symbol_index` / `handle_structure` / `ToolBox` / `read_file_snippet` 分页联动实测，并更新勾选待办记录。
+2. **编写原生 ReAct 调查循环引擎（`src/code_agent/orchestration/investigator.py` + `src/code_agent/orchestration/__init__.py`）**：
+   - 定义 `InvestigationStatus`、`InvestigationBudget`、`BudgetTracker`、`BudgetSnapshot`、`ToolCallRecord`、`InvestigationResult`、`Investigator` 与 `investigate()`，复用 W9 的 `get_tool_schemas()`、`ToolBox`、`serialize_tool_result()` 与 `get_chat_model()`。
+   - 落地四维预算守卫（`max_turns=4`、`max_tool_calls=8`、`max_total_tokens=16000`、`soft_timeout_seconds=45.0`）与总结预留区（`reserve_summary_turns=1`、`reserve_summary_tokens=1200`、`reserve_summary_seconds=8.0`）。
+   - 实现双层退出收口：探查预算耗尽时若总预算尚足，切为无工具的 `self.model.invoke(...)` 生成阶段性总结（状态 `BUDGET_EXHAUSTED`）；若总预算已耗尽或模型调用异常（`MODEL_ERROR`），不再请求模型，由 `_build_programmatic_fallback()` 确定性输出已收集观测轨迹与未核实缺口。
+3. **编写离线单元测试并完成全量回归（`tests/test_investigator.py`）**：
+   - 使用 `FakeChatModel` 与 `FakeClock` 编写 7 项单元测试，覆盖多步正常收敛、轮数耗尽预留总结、单轮批处理工具上限拦截与 `ToolMessage` 协议补齐、Token 硬顶直接兜底、软/硬超时分流、模型异常兜底及预算参数校验。
+   - 验证结果：`pytest tests/test_investigator.py -v`（7 passed）、`MYPYPATH=src mypy tests/test_investigator.py`（0 issues）、`mypy src eval`（30 source files 0 issues）、全仓 `pytest`（132 passed in 20.84s）。
+
+### 二、今天聊到的问题（后续复习用）
+1. 既然 `core/model.py` 已经把模型创建与调用封装到一起了，为什么 `investigator.py` 里还要定义一个 `ChatModelLike(Protocol)`？它和直接写 `BaseChatModel` 或 `Any`（如 `query_engine.py`）在运行和检查上有什么区别？
+2. `ChatModelLike.bind_tools` 的 `tools` 参数为什么写成 `Sequence[dict[str, Any]]`，而不是更宽泛的 `Sequence[Mapping[str, Any]]`？
+
+---
+
 ## 2026-11-20 (W9 S1~W · 代码探查工具箱、统一返回契约与 Tool Calling 闭环)
 
 ### 一、今日实际做了啥
