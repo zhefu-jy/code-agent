@@ -2,6 +2,33 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-24 (W10 S2 & S3 · 防死锁守护、证据记录表、三板块报告与 CLI /investigate)
+
+### 一、今日实际做了啥
+1. **实现证据记录表与引用程序核验（`src/code_agent/orchestration/evidence_ledger.py`）**：
+   - 定义 `EvidenceKind`（`SNIPPET_BODY` / `SYMBOL_SIGNATURE` / `TEXT_MATCH` / `REFERENCE_MATCH`）、`CitationCheckStatus`、`EvidenceItem`、`CitationVerificationItem` 与 `EvidenceVerification`。
+   - 仅登记工具实际返回区间与内容（复用 `compute_content_hash` 与 `get_git_info` 计算内容哈希与带 `dirty` 标记的 Git `revision`）；支持分页续读 `SNIPPET_BODY` 区间合并校验、`E#` 存在性校验、`COORDINATE_ONLY` 隔离与裸文本未绑定举证标识（`missing_evidence_binding`）。
+2. **接入防死锁守护与账本挂载（`src/code_agent/orchestration/investigator.py` + `src/code_agent/orchestration/__init__.py`）**：
+   - 在 `Investigator.run()` 中新增 `_LoopGuard`：按规范化参数签名拦截重复调用（`duplicate_tool_call`），连续 2 次空命中或失败时在 `ToolMessage` 中注入 `loop_guard_hint` 思路切换提示。
+   - 工具成功返回自动登记账本并把 `evidence_ids` 与紧凑摘要附在 `ToolMessage` 中；正常收敛或预留总结收口时执行 `ledger.verify_answer()`（程序级兜底不触发模型核验）；升级 System Prompt 与总结指令为三互斥板块规范。
+3. **实现三板块报告渲染与 CLI `/investigate`（`src/code_agent/orchestration/report.py` + `src/code_agent/cli.py`）**：
+   - 实现 `audit_report_sections()` 板块格式自检与 `format_investigation_report()` 高信噪比渲染器（展示预算、紧凑工具轨迹、三板块正文、引用核验与底账索引，不输出思考链）。
+   - 在 `cli.py` 新增 `handle_investigate` 与 `/investigate <question>` 命令，复用启动时构建的 `symbol_index`。
+4. **实机验证与三项调优闭环（`search_tools.py` + `investigator.py`）**：
+   - 首次在 `eval/fixtures/mini_repo` 用真实 DeepSeek 实跑 Case 035（跨模块草稿过滤链）：因 `search_text` 扫入 10 条 `traces/*.json` 历史产物且 `ToolMessage` 存在重复字段与缩进膨胀，3 轮即触发 `total_tokens_exhausted(19090/16000)` 并回退程序兜底（耗时 5.72s）。
+   - 针对性完成三项优化：① 在 `search_tools.py` 默认排除 `**/traces/**`、`**/logs/**`、`**/eval/runs/**`、`**/.pytest_tmp/**`、`**/.pytmp/**`（保留 `exclude_patterns=()` 显式覆盖能力）；② `_format_tool_message_payload` 剥离重复文本（`content` vs `numbered_content`、`formatted_preview` vs `matches`/`references`）并采用紧凑 JSON；③ `InvestigationBudget` 默认放宽至 `max_turns=6`、`max_tool_calls=12`、`max_total_tokens=100_000`、`reserve_summary_tokens=4_000`。
+   - 优化后重跑 `mini_repo` Case 035：完整跑通 5 轮探查（9 次工具）+ 1 轮预留总结（28,789 tokens，11.14s），读齐 `minisite/engine.py`、`config.py`、`models.py` 并输出规范三板块报告，绑定 8 个证据 ID、20 处引用通过正文核验。
+5. **离线单测与静态检查全绿验收**：
+   - 新增 `tests/test_evidence_ledger.py`（7 项）与 `tests/test_investigation_report.py`（4 项），并在 `tests/test_search_tools.py` 补充默认排除运行产物目录单测（共 9 项）。
+   - 验收结果：`mypy src eval`（32 个源文件 0 issues）、定向测试单文件 `mypy` 0 issues、全仓 `pytest`（144 passed in 22.60s）。
+
+### 二、今天聊到的问题（后续复习用）
+1. 既然最终模型返回的 `AIMessage` 只是一段自然语言而非结构化对象，`EvidenceItem` 是由谁生成的，程序后半段又如何对一段文本做核验？
+2. 如果模型忽略 Prompt 要求、只返回一段既无 `[E#]` 又无 `[file_path:start-end]` 的裸文本，程序应如何判定才不会误放行？
+3. 面对跨多文件调查（如 `mini_repo` Case 035），`16,000` Token 上限、`traces/` 历史目录污染与 `ToolMessage` 重复字段各自造成什么影响，应如何协同治理？
+
+---
+
 ## 2026-11-23 (W10 S1 · 主力机待办补验、原生 ReAct 调查循环与多维预算守卫)
 
 ### 一、今日实际做了啥

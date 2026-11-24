@@ -731,5 +731,33 @@
 * **坑在哪里**：`stream_ask` 写死 `BaseChatModel` 会迫使测试替身继承 Pydantic 重基类；`execute_query` 退回 `Optional[Any]` 又完全失去了静态检查。
 * **怎么解决**：在 `investigator.py` 中声明最小结构协议 `ChatModelLike(Protocol)`（仅约定 `invoke` 与 `bind_tools`），运行期依然直调 `get_chat_model()` 返回的真实 `ChatDeepSeek`；同时 `bind_tools` 的 `tools` 参数需对齐 `BaseChatModel` 源码标注为 `Sequence[dict[str, Any]]`（而非更宽的 `Mapping`），防止参数逆变导致真实模型反而通不过 `mypy` 校验。
 
+---
+
+## 十九、W10 S2 & S3 证据账本、防死锁与实机调优避坑
+
+### 1. “工具入账 vs 回答审账”机制与裸文本误放行漏洞
+* **机制边界**：`EvidenceItem` 绝不是由模型最终回答生成的，而是由宿主机在每次 `ToolBox.dispatch()` 返回后从 `ToolResult.data` 采集并加注哈希的；模型最终 `AIMessage` 仍是一段可读自然语言，只需按约定在句末附带 `[E#]` 和 `[文件路径:起始行-结束行]`，最后由 Python 端的 `ledger.verify_answer()` 做正则抽取与底账对照。
+* **踩到的盲区**：初版 `EvidenceVerification.has_unverified_claims` 仅检查 `unknown_evidence_ids` 或 `unverified_count > 0`。当模型完全不标出处、只吐一段裸文本时，两个值都为空/0，导致 `has_unverified_claims` 错误返回 `False`。
+* **解决与梳理**：
+  - 增加 `missing_evidence_binding: bool`（账本已采证但回答未绑定任何 `E#` 或物理引用时置 `True`）并并入 `has_unverified_claims`，彻底堵住裸文本放行漏洞；
+  - 将 `lookup_symbol`（坐标与签名）和 `search_text` / `find_references`（单行预览）隔离为 `COORDINATE_ONLY`，严禁充当函数体实现依据；
+  - 实测还观察到模型会把两行相邻 `text_match`（`57-57` 与 `58-58`）合并写成 `[minisite/cli.py:57-58]`，因账本目前只对 `SNIPPET_BODY` 做区间合并，该引用被严格判为 `UNVERIFIED` 提醒。
+
+### 2. 代码合并残留导致双倍工具调用与重复告警
+* **遇到的问题**：手动往 `investigator.py` 贴入新版防死锁与账本逻辑时未删掉旧版分发块，导致每次合法工具调用在同一次循环里执行了两遍（`tool_calls_used` 翻倍、重复插入同 `call_id` 的 `ToolMessage`）；`evidence_ledger.py` 也因残留旧 `if` 语句把同一条未绑定告警追加了两次。
+* **避坑要点**：长函数做局部替换后，务必对照单测与 diff 确认旧分支已完整移除，避免出现“新旧代码并排运行”的隐蔽双倍执行。
+
+### 3. 真机实跑暴露的三大预算放大器与协同治理
+* **遇到的问题**：初次在 `eval/fixtures/mini_repo` 上通过 CLI 实跑 Case 035 时，3 轮 6 次工具就吃掉了 `19,090` tokens（触发 `total_tokens_exhausted` 回退兜底，未能读取 `minisite/models.py`）。
+* **根因拆解**：
+  1. `search_text` 仅沿用 `IGNORED_DIRS`，未屏蔽 `traces/` 等运行产物目录，一次搜 `include_drafts` 拖入 10 条历史 `traces/*.json` 命中；
+  2. `ToolMessage` 中同一份文本发了两份：`CodeSnippetResult` 同时含 `content` 与 `numbered_content`，`SearchTextData` 同时含 `matches` 与 `formatted_preview`，再叠加上 `indent=2` 缩进，每轮对话历史重复放大；
+  3. 默认 `max_turns=4`（仅 3 轮探查）与 `max_total_tokens=16000` 对跨 3 个文件的调用链追踪偏紧。
+* **解决与效果**：
+  - `search_tools.py` 默认通过 `DEFAULT_EXCLUDE_PATTERNS` 屏蔽 `**/traces/**`、`**/logs/**`、`**/eval/runs/**`、`**/.pytest_tmp/**`、`**/.pytmp/**`（支持显式传 `exclude_patterns=()` 放行）；
+  - `investigator.py` 的 `_format_tool_message_payload` 在账本完成原始 `content` 留存后，剥离发给模型的重复载荷并改用紧凑 JSON；
+  - 默认预算调整为 `max_turns=6`、`max_tool_calls=12`、`max_total_tokens=100_000`、`reserve_summary_tokens=4_000`（用轮数/次数控节奏，用 10w Token 做安全兜底）。重跑 Case 035 后，6 轮 9 次工具总计 `28,789` tokens（11.14s）即读齐 3 个文件并完整输出三板块结构化报告。
+
+
 
 
