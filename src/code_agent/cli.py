@@ -15,6 +15,7 @@ from code_agent.core.query_engine import (
     build_retriever_for_project,
     execute_query,
 )
+from code_agent.orchestration import format_investigation_report, investigate
 from typing import Any
 from code_agent.index.hybrid_retriever import HybridSearchResult
 MAX_REVIEW_LINES = 800
@@ -195,6 +196,40 @@ def handle_deps(raw_arg: str, symbol_index: SymbolIndex) -> None:
     print("=" * 64 + "\n")
 
 
+def handle_investigate(
+    raw_arg: str,
+    repo_root: Path,
+    symbol_index: SymbolIndex | None = None,
+    *,
+    model: Any = None,
+) -> None:
+    """执行受控多步代码调查并输出高信噪比结构化证据报告。"""
+    question = raw_arg.strip()
+    if not question:
+        print(
+            "⚠️ 用法: /investigate <问题>，例如 /investigate execute_query 是如何调用模型与判卷的\n"
+        )
+        return
+
+    print(f"🕵️  正在多步调查（预算内调工具核实）: {question}\n")
+    try:
+        result = investigate(
+            project_root=repo_root,
+            question=question,
+            model=model,
+            symbol_index=symbol_index,
+        )
+    except Exception as exc:
+        print(f"⚠️ 调查执行失败: {exc}\n")
+        return
+
+    print(format_investigation_report(result))
+    print()
+
+
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Code-Agent 智能代码与规范交互终端")
     parser.add_argument("--repo", "-r", type=str, default=".", help="目标工程根目录 (默认为当前目录)")
@@ -223,6 +258,7 @@ def main() -> None:
     print("  - 工程结构：输入 /structure (查看布局、模块清单与构建耗时)")
     print("  - 符号查询：输入 /symbols <符号名或FQN> (例如: /symbols BuildEngine)")
     print("  - 模块依赖：输入 /deps <模块全名> (例如: /deps minisite.cli)")
+    print("  - 多步调查：输入 /investigate <问题> (例如: /investigate execute_query 是如何调用模型与判卷的)")
     print("  - 退出程序：输入 exit")
     print("=" * 64 + "\n")
 
@@ -289,6 +325,13 @@ def main() -> None:
             continue
         if input_question == "/deps" or input_question.startswith("/deps "):
             handle_deps(input_question[len("/deps"):].strip(), symbol_index)
+            continue
+        if input_question == "/investigate" or input_question.startswith("/investigate "):
+            handle_investigate(
+                input_question[len("/investigate"):].strip(),
+                repo_root=repo_root,
+                symbol_index=symbol_index,
+            )
             continue
         # 3. 普通提问：直接交由统一业务内核 execute_query 处理
         print("Agent 正在分析并检索代码 ...\n")

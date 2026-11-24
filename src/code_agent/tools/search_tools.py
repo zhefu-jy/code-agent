@@ -15,6 +15,13 @@ DEFAULT_MAX_PER_FILE = 5
 DEFAULT_MAX_CHARS = 3000
 DEFAULT_MAX_LINE_CHARS = 200
 DEFAULT_MAX_FILE_BYTES = 1_048_576  # 1 MB 上限，防止误扫超大日志/数据文件
+DEFAULT_EXCLUDE_PATTERNS: tuple[str, ...] = (
+    "**/traces/**",
+    "**/logs/**",
+    "**/eval/runs/**",
+    "**/.pytest_tmp/**",
+    "**/.pytmp/**",
+)
 _TOOL_NAME = "search_text"
 _BINARY_PROBE_BYTES = 8192
 
@@ -338,9 +345,12 @@ def search_text(
                 f"非法的 file_pattern（不允许为空、绝对路径或包含 ..）：{file_pattern}",
             )
 
+    effective_excludes = (
+        DEFAULT_EXCLUDE_PATTERNS if exclude_patterns is None else exclude_patterns
+    )
     norm_excludes: list[str] = []
-    if exclude_patterns:
-        for raw_exc in exclude_patterns:
+    if effective_excludes:
+        for raw_exc in effective_excludes:
             norm_exc = _validate_glob_pattern(raw_exc)
             if norm_exc is None:
                 return tool_error(

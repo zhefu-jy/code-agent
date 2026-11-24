@@ -263,3 +263,26 @@ def test_adapt_w9_s1_results_to_tool_result(tmp_path: Path) -> None:
     sym_err = adapt_symbol_lookup(lookup_symbol("   ", project_root=tmp_path))
     assert sym_err.ok is False
     assert sym_err.error_code == "empty_query"
+
+
+def test_search_text_excludes_runtime_artifact_dirs_by_default(tmp_path: Path) -> None:
+    """验证默认排除 traces/、logs/、eval/runs/ 等运行产物，同时支持显式传空列表放行。"""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "traces").mkdir()
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "eval" / "runs").mkdir(parents=True)
+
+    (tmp_path / "src" / "app.py").write_text("FLAG = 'needle_x'\n", encoding="utf-8")
+    (tmp_path / "traces" / "t1.json").write_text('{"q": "needle_x"}\n', encoding="utf-8")
+    (tmp_path / "logs" / "run.log").write_text("needle_x\n", encoding="utf-8")
+    (tmp_path / "eval" / "runs" / "r1.json").write_text("needle_x\n", encoding="utf-8")
+
+    default_res = search_text(tmp_path, "needle_x")
+    assert default_res.ok is True
+    assert default_res.total_matches == 1
+    assert default_res.data is not None
+    assert [m.file_path for m in default_res.data.matches] == ["src/app.py"]
+
+    unfiltered_res = search_text(tmp_path, "needle_x", exclude_patterns=())
+    assert unfiltered_res.ok is True
+    assert unfiltered_res.total_matches == 4

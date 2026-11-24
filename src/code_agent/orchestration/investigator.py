@@ -23,6 +23,13 @@ from code_agent.tools.registry import (
     serialize_tool_result,
 )
 
+from code_agent.orchestration.evidence_ledger import (
+    EvidenceItem,
+    EvidenceLedger,
+    EvidenceVerification,
+    resolve_project_revision,
+)
+
 _DEFAULT_SYSTEM_PROMPT = (
     "你是一个严谨的本地工程代码调查助手。你必须通过调用给定工具核实代码实现，"
     "禁止猜测或编造未读取到的文件路径、符号名与行号。\n"
@@ -30,16 +37,27 @@ _DEFAULT_SYSTEM_PROMPT = (
     "1. 优先使用 lookup_symbol 或 search_text 定位目标模块与行号范围；\n"
     "2. 需要核实具体逻辑时调用 read_file_snippet 读取关键行号区间，遇到截断可用 next_cursor 续读；\n"
     "3. 需要追踪调用方时调用 find_references；\n"
-    "4. 证据足够回答问题时直接输出清晰结论，并标明哪些部分尚未核实。"
+    "4. 每次工具成功返回都会在 evidence_items_meta 中附带证据编号（如 E1、E2）；"
+    "仅调用 lookup_symbol 或 search_text 获得的坐标/单行预览不代表已读过函数体实现，严禁据此推断内部逻辑；\n"
+    "5. 最终回答必须严格划分为以下三个互斥板块，不得省略或混写：\n"
+    "【已确认代码事实】\n"
+    "- 仅列出通过工具直接核实的代码或文档事实，每条末尾必须绑定证据编号与物理行号，例如 [E1] [src/app.py:10-25]。\n"
+    "【架构推论与说明】\n"
+    "- 基于上述已确认事实给出的设计解释、串联推论或职责归纳；不得在此伪造新的未核实事实。\n"
+    "【未核实缺口/盲区】\n"
+    "- 如实列出尚未读取的函数实现、未追踪的动态调用、unresolved 项或受限于查询范围未能确认的部分；若无缺口请写“无明显缺口”。"
 )
 _BUDGET_SUMMARY_INSTRUCTION = (
     "【系统预算通知】探查阶段预算已耗尽，工具调用已停止。"
     "请勿再请求调用任何工具，仅依据当前对话历史中已经通过工具实际获得的代码观测结果，"
-    "输出一份简明清晰的阶段性总结，必须明确区分：\n"
-    "1. 已核实的代码事实（仅写已读取/查到的文件、符号与行号）；\n"
-    "2. 尚未核实的缺口与盲区。"
+    "严格按以下三个互斥板块输出阶段性总结：\n"
+    "【已确认代码事实】\n"
+    "- 仅写已核实的文件、符号与行号，每条绑定 [E#] 与 [文件路径:起始行-结束行]。\n"
+    "【架构推论与说明】\n"
+    "- 仅写基于已采证据的合理说明（若无可写“暂无”）。\n"
+    "【未核实缺口/盲区】\n"
+    "- 明确列出尚未核实的调用链、未读取正文的函数与盲区。"
 )
-
 class ChatModelLike(Protocol):
     """兼容 LangChain BaseChatModel 与测试替身的最小模型协议。"""
     def invoke(self, input: list[BaseMessage], **kwargs: Any) -> Any: ...
@@ -66,12 +84,12 @@ class InvestigationBudget:
         reserve_summary_tokens: 为最终总结预留的 Token 缓冲区。
         reserve_summary_seconds: 为最终总结预留的时间缓冲区（秒）。
     """
-    max_turns: int = 4
-    max_tool_calls: int = 8
-    max_total_tokens: int = 16000
-    soft_timeout_seconds: float = 45.0
+    max_turns: int = 6
+    max_tool_calls: int = 12
+    max_total_tokens: int = 100_000
+    soft_timeout_seconds: float = 60.0
     reserve_summary_turns: int = 1
-    reserve_summary_tokens: int = 1200
+    reserve_summary_tokens: int = 4_000
     reserve_summary_seconds: float = 8.0
 
     def __post_init__(self) -> None:
@@ -151,6 +169,8 @@ class InvestigationResult:
     tool_records: tuple[ToolCallRecord, ...]
     observations: tuple[str, ...]
     error_message: str | None = None
+    evidence_items: tuple[EvidenceItem, ...] = ()
+    evidence_verification: EvidenceVerification | None = None
 
 @dataclass(frozen=True)
 class _ParsedToolCall:
@@ -258,6 +278,98 @@ class BudgetTracker:
             elapsed_seconds=round(self.elapsed_seconds(), 4),
             exhausted_reason=self.exhausted_reason,
         )
+
+
+class _LoopGuard:
+    """防死锁守护：拦截重复参数调用，并在连续空命中时注入思路切换提示。"""
+
+    def __init__(self, empty_pivot_threshold: int = 2) -> None:
+        self._empty_pivot_threshold = max(1, empty_pivot_threshold)
+        self._seen_signatures: set[str] = set()
+        self._consecutive_empty_count = 0
+
+    @staticmethod
+    def _normalize_args(args: Mapping[str, Any]) -> dict[str, Any]:
+        normalized: dict[str, Any] = {}
+        for key, value in args.items():
+            if key == "file_path" and isinstance(value, str):
+                normalized[key] = value.replace("\\", "/").strip()
+            elif isinstance(value, str):
+                normalized[key] = value.strip()
+            else:
+                normalized[key] = value
+        return normalized
+
+    @classmethod
+    def make_signature(cls, tool_name: str, args: Mapping[str, Any]) -> str:
+        """生成与字典键顺序无关的稳定工具调用签名。"""
+        norm_args = cls._normalize_args(args)
+        args_json = json.dumps(norm_args, sort_keys=True, ensure_ascii=False, default=str)
+        return f"{tool_name}:{args_json}"
+
+    def is_duplicate_call(self, tool_name: str, args: Mapping[str, Any]) -> bool:
+        """判断本次调用是否与本轮调查中已执行过的某次调用完全相同。"""
+        sig = self.make_signature(tool_name, args)
+        return sig in self._seen_signatures
+
+    def record_execution(
+        self,
+        tool_name: str,
+        args: Mapping[str, Any],
+        ok: bool,
+        returned_count: int,
+    ) -> str | None:
+        """
+        记录一次真实执行的工具调用；若连续空命中或失败达到阈值，返回思路切换提示。
+        """
+        sig = self.make_signature(tool_name, args)
+        self._seen_signatures.add(sig)
+
+        if ok and returned_count > 0:
+            self._consecutive_empty_count = 0
+            return None
+
+        self._consecutive_empty_count += 1
+        if self._consecutive_empty_count >= self._empty_pivot_threshold:
+            return (
+                f"【思路切换提示】已连续 {self._consecutive_empty_count} 次工具调用未获得有效结果。"
+                "请勿重复相同查询，建议尝试：1) 改用 search_text 搜索更短的关键词或去掉 file_pattern 限制；"
+                "2) 先用 lookup_symbol 模糊匹配模块/符号名；3) 若确认仓库无相关实现，直接结束探查并如实报告缺口。"
+            )
+        return None
+
+
+def _format_tool_message_payload(
+    res: Any,
+    created_evidence: tuple[EvidenceItem, ...],
+    pivot_hint: str | None = None,
+) -> str:
+    """
+    将 ToolResult 精简为高信噪比紧凑 JSON，去除重复文本载荷并附带证据 ID 与切换提示。
+    """
+    payload: dict[str, Any] = json.loads(serialize_tool_result(res))
+    data = payload.get("data")
+    if isinstance(data, dict):
+        # 仅保留带行号的 numbered_content，避免同份代码正文以 content+numbered_content 发两遍
+        if "numbered_content" in data and "content" in data:
+            data.pop("content", None)
+        # search_text / find_references 保留结构化列表即可，去掉重复的 formatted_preview
+        if ("matches" in data or "references" in data) and "formatted_preview" in data:
+            data.pop("formatted_preview", None)
+
+    if created_evidence:
+        payload["evidence_ids"] = [item.id for item in created_evidence]
+        payload["evidence_items_meta"] = [
+            f"{item.id} ({item.kind.value}) {item.file_path}:{item.line_range[0]}-{item.line_range[1]}"
+            for item in created_evidence
+        ]
+    if pivot_hint is not None:
+        payload["loop_guard_hint"] = pivot_hint
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+
+
 
 def _extract_text_content(content: Any) -> str:
     """安全提取 AIMessage.content 文本，兼容 str 与多段 content block 列表。"""
@@ -413,6 +525,9 @@ class Investigator:
         """围绕单个代码调查问题执行受控多步调查循环。"""
         cleaned_question = question.strip()
         tracker = BudgetTracker(self.budget, clock=self._clock)
+        revision = resolve_project_revision(self.project_root)
+        ledger = EvidenceLedger(revision=revision)
+        loop_guard = _LoopGuard(empty_pivot_threshold=2)
         if not cleaned_question:
             return InvestigationResult(
                 question=question,
@@ -424,6 +539,7 @@ class Investigator:
                 tool_records=(),
                 observations=(),
                 error_message="empty_question",
+                evidence_items=ledger.items
             )
         schemas = get_tool_schemas()
         bound_model = self.model.bind_tools(schemas)
@@ -444,6 +560,7 @@ class Investigator:
                     tracker=tracker,
                     tool_records=tool_records,
                     observations=observations,
+                    ledger=ledger,
                 )
             current_turn = tracker.turns_used + 1
             try:
@@ -457,6 +574,7 @@ class Investigator:
                     tracker=tracker,
                     tool_records=tool_records,
                     observations=observations,
+                    ledger=ledger
                 )
             in_tok, out_tok, tot_tok = _extract_token_usage(raw_response)
             tracker.record_model_turn(in_tok, out_tok, tot_tok)
@@ -469,6 +587,7 @@ class Investigator:
             parsed_calls = _extract_tool_calls(ai_msg, current_turn)
             if not parsed_calls:
                 final_answer = _extract_text_content(ai_msg.content)
+                verification = ledger.verify_answer(final_answer)
                 return InvestigationResult(
                     question=cleaned_question,
                     status=InvestigationStatus.COMPLETED,
@@ -478,6 +597,8 @@ class Investigator:
                     budget=tracker.snapshot(),
                     tool_records=tuple(tool_records),
                     observations=tuple(observations),
+                    evidence_items=ledger.items,
+                    evidence_verification=verification,
                 )
             batch_stopped_reason: str | None = None
             for call in parsed_calls:
@@ -501,11 +622,59 @@ class Investigator:
                         )
                     )
                     continue
+
+                if loop_guard.is_duplicate_call(call.name, call.args):
+                    step_counter += 1
+                    dup_summary = f"{call.name}({call.args!r}) -> 拦截 [duplicate_tool_call]"
+                    tool_records.append(
+                        ToolCallRecord(
+                            turn=current_turn,
+                            step_index=step_counter,
+                            tool_call_id=call.call_id,
+                            tool_name=call.name,
+                            arguments=call.args,
+                            ok=False,
+                            is_truncated=False,
+                            returned_count=0,
+                            remaining_count=0,
+                            error_code="duplicate_tool_call",
+                            summary=dup_summary,
+                            duration_ms=0.0,
+                        )
+                    )
+                    dup_payload = json.dumps(
+                        {
+                            "ok": False,
+                            "tool_name": call.name,
+                            "error_code": "duplicate_tool_call",
+                            "error_message": (
+                                "防死锁守护拦截：已使用完全相同的参数调用过该工具，禁止原地重复执行。"
+                                "请更换参数、改用其他工具，或基于已有证据直接总结回答。"
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                    messages.append(
+                        ToolMessage(
+                            content=dup_payload,
+                            tool_call_id=call.call_id,
+                            name=call.name,
+                        )
+                    )
+                    continue
+
                 step_counter += 1
                 t0 = self._clock()
                 res = self.toolbox.dispatch(call.name, call.args)
                 duration_ms = round(max(0.0, (self._clock() - t0) * 1000.0), 2)
                 tracker.record_tool_call()
+                pivot_hint = loop_guard.record_execution(
+                    tool_name=call.name,
+                    args=call.args,
+                    ok=res.ok,
+                    returned_count=res.returned_count,
+                )
+                created_evidence = ledger.record_tool_result(res)
                 summary = _summarize_tool_observation(
                     tool_name=call.name,
                     args=call.args,
@@ -533,10 +702,18 @@ class Investigator:
                     )
                 )
                 if res.ok:
-                    observations.append(summary)
+                    if created_evidence:
+                        eids = ",".join(item.id for item in created_evidence)
+                        observations.append(f"{summary} [{eids}]")
+                    else:
+                        observations.append(summary)
                 messages.append(
                     ToolMessage(
-                        content=serialize_tool_result(res),
+                        content=_format_tool_message_payload(
+                            res,
+                            created_evidence,
+                            pivot_hint=pivot_hint,
+                        ),
                         tool_call_id=call.call_id,
                         name=call.name,
                     )
@@ -549,6 +726,7 @@ class Investigator:
                     tracker=tracker,
                     tool_records=tool_records,
                     observations=observations,
+                    ledger=ledger,
                 )
 
     def _finish_on_budget_exhausted(
@@ -559,6 +737,7 @@ class Investigator:
         tracker: BudgetTracker,
         tool_records: list[ToolCallRecord],
         observations: list[str],
+        ledger: EvidenceLedger
     ) -> InvestigationResult:
         """预算耗尽时优先用预留预算请模型总结；若总预算已耗尽或总结失败，改由程序直接兜底。"""
         can_summarize, block_reason = tracker.can_run_reserved_summary()
@@ -580,6 +759,7 @@ class Investigator:
                 budget=tracker.snapshot(),
                 tool_records=tuple(tool_records),
                 observations=tuple(observations),
+                evidence_items=ledger.items
             )
         summary_messages = list(messages) + [HumanMessage(content=_BUDGET_SUMMARY_INSTRUCTION)]
         try:
@@ -605,6 +785,7 @@ class Investigator:
                 tool_records=tuple(tool_records),
                 observations=tuple(observations),
                 error_message=str(exc),
+                evidence_items=ledger.items
             )
         in_tok, out_tok, tot_tok = _extract_token_usage(summary_response)
         tracker.record_model_turn(in_tok, out_tok, tot_tok)
@@ -629,6 +810,10 @@ class Investigator:
             budget=tracker.snapshot(),
             tool_records=tuple(tool_records),
             observations=tuple(observations),
+            evidence_items=ledger.items,
+            evidence_verification=(
+                None if used_fallback else ledger.verify_answer(summary_text)
+            ),
         )
 
     def _finish_on_model_error(
@@ -639,6 +824,7 @@ class Investigator:
         tracker: BudgetTracker,
         tool_records: list[ToolCallRecord],
         observations: list[str],
+        ledger: EvidenceLedger
     ) -> InvestigationResult:
         """模型不可用时不再发起任何额外请求，直接由程序输出已有观测、缺口与退出原因。"""
         answer = _build_programmatic_fallback(
@@ -659,6 +845,7 @@ class Investigator:
             tool_records=tuple(tool_records),
             observations=tuple(observations),
             error_message=error_message,
+            evidence_items=ledger.items
         )
 
 def investigate(
