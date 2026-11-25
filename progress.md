@@ -2,6 +2,25 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-25 (W11 S1 · 规范条款拆解与人工确认环)
+
+### 一、今日实际做了啥
+1. **写了规范拆解和人工确认模块（`src/code_agent/spec/__init__.py` + `src/code_agent/spec/rule_parser.py`）**：
+   - 先用 `MarkdownDocChunker` 把 Markdown 切出真实行号，再让模型用 `with_structured_output` 抽成结构化规则草稿（`SpecRule`），程序顺手把模型给的切片编号和行号卡死在真实范围内，防瞎编行号。
+   - 加上了人工确认流程：把草稿表打印出来，支持一条条回车确认（`confirmed`）、改适用范围和条件（`edited`）、跳过废话（`skipped`）、补漏（`add_rule`），也支持 `all` 全部放行或 `q` 提前退出。没确认的草稿不会放行给后面的代码匹配和审计。
+2. **写了 6 个离线单测并跑通全量检查（`tests/test_rule_parser.py`）**：
+   - 用 `FakeStructuredModel` 和脚本化输入输出测完了正常拆解、行号越界夹紧、空文件/报错兜底、各种确认修改分支。
+   - 在 `code-agent` 环境实跑结果：`pytest tests/test_rule_parser.py -v`（6 passed in 0.59s）、`mypy src eval`（34 files 0 issues）、`MYPYPATH=src mypy tests/test_rule_parser.py`（0 issues）、全仓 `pytest`（153 passed in 23.76s）。
+3. **拿真实 DeepSeek 模型实测了一把**：
+   - 准备了一份带背景废话、超时数值+例外、异常日志和 `os.system` 禁用的样本规范，实跑 `parse_spec_rules` + 人工确认环：耗时 `3.44s`，0 告警，7 条规则行号全对准了原文，纯背景小节也被自动过滤掉。
+
+### 二、今天聊到的问题（后续复习用）
+1. 今天的“先拆草稿表、人改完再放行”，和平时 AI 工具弹几个问题让我确认有啥区别？
+2. 为什么不能把整篇 Markdown 直接扔给模型让它自己报第几行到第几行？
+3. 真机实测时为什么模型老爱把规则拆太细、把适用范围写太大，人工确认环怎么在后面搜代码前把成本省下来？
+
+---
+
 ## 2026-11-25 (W10 W · 独立验收盲测、首个端到端冒烟测试与 v0.1 固化)
 
 ### 一、今日实际做了啥
