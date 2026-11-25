@@ -758,6 +758,20 @@
   - `investigator.py` 的 `_format_tool_message_payload` 在账本完成原始 `content` 留存后，剥离发给模型的重复载荷并改用紧凑 JSON；
   - 默认预算调整为 `max_turns=6`、`max_tool_calls=12`、`max_total_tokens=100_000`、`reserve_summary_tokens=4_000`（用轮数/次数控节奏，用 10w Token 做安全兜底）。重跑 Case 035 后，6 轮 9 次工具总计 `28,789` tokens（11.14s）即读齐 3 个文件并完整输出三板块结构化报告。
 
+---
+
+## 二十、W10 W 独立验收盲测与冒烟测试避坑
+
+### 1. 工具 0 命中不入账引发的模型 `[E#]` 顺延幻觉
+* **遇到的问题**：在 `mini_repo` 独立验收任务 1 中，前 8 条工具命中登记为 `E1~E8`，随后 T4/S8（`find_references`）与 T5/S9（`search_text`）均返回 0 条结果；最终模型回答里出现了 `[E9]`、`[E10]`，被 `EvidenceLedger.verify_answer()` 报错：`回答引用了账本中不存在的证据 ID：E9, E10`。
+* **坑在哪里**：`EvidenceLedger.record_tool_result()` 为保证“空结果不产生虚假证据”，只在命中条目非空时分配 `E#`；但模型在长对话里容易按工具调用次数直觉顺延编号，把未入账的空查询也当成 `E9`、`E10`。
+* **认知沉淀**：这恰恰验证了“程序级审账不可替代 Prompt 自律”的设计价值——`unknown_evidence_ids` 能够精准暴露并拦截空查询顺延编号，防止模型把“0 命中”伪装成带编号的实证。
+
+### 2. `tests/smoke/` 目录层级与 `parents[N]` 相对基准
+* **遇到的问题**：初次手写 `test_v01_investigate.py` 时放到了 `tests/` 根目录而非 `tests/smoke/`，导致 `Path(__file__).resolve().parents[2] / "eval" / "fixtures" / "mini_repo"` 向上多跳了一级，全部 3 个用例报 `NotADirectoryError`。
+* **避坑要点**：阶段性端到端冒烟测试统一沉淀在 `tests/smoke/` 下（供 W16 S2 直接执行 `pytest tests/smoke` 聚合回归），对应仓库根目录深度固定为 `parents[2]`；移入 `tests/smoke/test_v01_investigate.py` 后一次跑通 3 项。
+
+
 
 
 

@@ -2,6 +2,24 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-25 (W10 W · 独立验收盲测、首个端到端冒烟测试与 v0.1 固化)
+
+### 一、今日实际做了啥
+1. **设计并冻结实跑 3 个独立验收任务（`eval/fixtures/mini_repo`）**：
+   - 避开历史调优用例 `031~036`（含 Case 035），事先制定 3 个跨模块/防幻觉任务的“必核事实、必要证据与不可接受错误”预期表：① 未传 `-c/--config` 的默认配置加载、`DEFAULT_CONFIG_FILENAME` 实际状态与 `run_cli` 异常退出码；② `BuildEngine` 文件扫描、`_parse_file` 元数据解析、`Page`/`Post` 实例化渲染差异与写盘机制；③ `--verbose`、`SiteConfig.max_posts`、`SiteConfig.theme` 在主流程中的真实接线情况。
+   - 在冻结基线 `9066c7d` 下通过 CLI `/investigate` 实跑盲测：3 题核心事实全部命中且无不可接受错误（任务 2 `completed`，4 轮 / 7 工具 / 19,123 tok / 12.03s，21 处正文覆盖 0 告警；任务 1、3 `budget_exhausted` 预留总结收口，6 轮 / 10~11 工具 / ~27k~33k tok / ~11.9s，其中任务 1 账本精确拦下空命中顺延编造的 `E9`/`E10` 与 `exceptions.py` 仅签名引用告警）。
+2. **编写项目首个端到端流程冒烟测试（`tests/smoke/test_v01_investigate.py`）**：
+   - 使用离线 `FakeChatModel` 搭配真实 `mini_repo` 与 `build_symbol_index`，覆盖 CLI `/investigate` 全链路正常收敛与三板块核验、探查轮数耗尽切换无工具预留总结（`BUDGET_EXHAUSTED`）、重复调用防死锁拦截（`duplicate_tool_call`）与伪造 `[E99]`/未读行号拒放行共 3 个端到端场景。
+3. **双轨门禁全绿验收、总结配图与 v0.1 固化**：
+   - 验证结果：`pytest tests/smoke/test_v01_investigate.py -v`（3 passed in 1.01s）、全仓 `pytest`（147 passed in 24.09s）、`mypy src eval`（32 个源文件 0 issues）、单文件 `MYPYPATH=src mypy tests/smoke/test_v01_investigate.py`（0 issues）。
+   - 参照 W9 视觉规范整理并生成 `docs/images/W10/` 全套 5 张架构归纳图（`W10_总结` + `S1`~`W`），提交代码并打上 `v0.1` 里程碑标签。
+
+### 二、今天聊到的问题（后续复习用）
+1. 为什么在 `tests/test_v01_investigate.py` 与 `tests/smoke/test_v01_investigate.py` 之间少一层目录会直接导致 `Path(__file__).resolve().parents[2]` 越界，以及后续 `tests/smoke/` 目录在 W16 聚合回归中的作用？
+2. 当 `search_text` / `find_references` 返回 0 命中时不登记进 `EvidenceLedger`，为什么模型有时仍会顺延编号引用 `[E9]`/`[E10]`，程序审账机制是如何将其拦下的？
+
+---
+
 ## 2026-11-24 (W10 S2 & S3 · 防死锁守护、证据记录表、三板块报告与 CLI /investigate)
 
 ### 一、今日实际做了啥
