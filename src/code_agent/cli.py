@@ -15,6 +15,23 @@ from code_agent.core.query_engine import (
     build_retriever_for_project,
     execute_query,
 )
+from collections.abc import Callable
+from dataclasses import dataclass
+import shlex
+
+from code_agent.orchestration import InvestigationBudget
+from code_agent.spec import (
+    RuleCandidateMap,
+    SpecAuditReport,
+    audit_candidate_map,
+    confirm_all_drafts,
+    format_audit_report_markdown,
+    format_candidate_map_report,
+    interactive_confirm_rules,
+    interactive_review_candidates,
+    match_rules_to_candidates,
+    parse_spec_rules,
+)
 from code_agent.orchestration import format_investigation_report, investigate
 from typing import Any
 from code_agent.index.hybrid_retriever import HybridSearchResult
@@ -226,7 +243,245 @@ def handle_investigate(
     print(format_investigation_report(result))
     print()
 
+@dataclass(frozen=True)
+class _VerifySpecArgs:
+    """/verify-spec 命令解析后的结构化参数。"""
 
+    spec_file: str
+    repo_override: str | None = None
+    out_path: str | None = None
+    auto_confirm: bool = False
+
+
+def _strip_wrapping_quotes(token: str) -> str:
+    """剥离 Windows shlex(posix=False) 保留的外层单/双引号。"""
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
+
+
+def _parse_verify_spec_args(raw_arg: str) -> _VerifySpecArgs:
+    """安全解析 /verify-spec 参数，兼容 Windows 反斜杠路径且不抛出 SystemExit。"""
+    tokens = [_strip_wrapping_quotes(t) for t in shlex.split(raw_arg, posix=False)]
+    spec_file: str | None = None
+    repo_override: str | None = None
+    out_path: str | None = None
+    auto_confirm = False
+
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if tok in ("--repo", "-r"):
+            if idx + 1 >= len(tokens):
+                raise ValueError("参数 --repo 缺少工程目录路径")
+            repo_override = tokens[idx + 1]
+            idx += 2
+        elif tok in ("--out", "-o"):
+            if idx + 1 >= len(tokens):
+                raise ValueError("参数 --out 缺少报告输出文件路径")
+            out_path = tokens[idx + 1]
+            idx += 2
+        elif tok in ("--yes", "-y"):
+            auto_confirm = True
+            idx += 1
+        elif tok.startswith("-"):
+            raise ValueError(f"不支持的参数选项: {tok}")
+        else:
+            if spec_file is not None:
+                raise ValueError(f"检测到多余的位置参数: {tok}")
+            spec_file = tok
+            idx += 1
+
+    if not spec_file:
+        raise ValueError(
+            "用法: /verify-spec <spec_file> [--repo <path>] [--out <report.md>] [--yes]"
+        )
+
+    return _VerifySpecArgs(
+        spec_file=spec_file,
+        repo_override=repo_override,
+        out_path=out_path,
+        auto_confirm=auto_confirm,
+    )
+
+
+def _resolve_spec_file(
+    raw_spec: str,
+    *,
+    default_repo_root: Path,
+    target_repo_root: Path,
+) -> Path | None:
+    """按绝对路径 -> 当前工作目录 -> 目标工程 -> 启动工程顺序定位规约文件。"""
+    candidate = Path(raw_spec)
+    if candidate.is_absolute():
+        return candidate.resolve() if candidate.is_file() else None
+
+    search_roots = [Path.cwd(), target_repo_root, default_repo_root]
+    for base in search_roots:
+        resolved = (base / candidate).resolve()
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _build_full_spec_report_markdown(
+    *,
+    spec_path: Path,
+    candidate_map: RuleCandidateMap,
+    report: SpecAuditReport,
+    retriever_type: str,
+    auto_confirm: bool,
+) -> str:
+    """组合 S2 双口径定位统计与 S3 四态审计矩阵，生成完整可落盘 Markdown 报告。"""
+    metrics = candidate_map.summary_metrics()
+    base_md = format_audit_report_markdown(report)
+    env_block = "\n".join(
+        [
+            "## 核查配置与 S2 定位分离统计",
+            "",
+            f"- **规约文件**: `{spec_path.as_posix()}`",
+            f"- **检索策略**: `{retriever_type}` | **人工确认模式**: `{'auto(--yes)' if auto_confirm else 'human-in-the-loop'}`",
+            (
+                f"- **S2 自主定位成绩（纯自动，不含人工补充）**: "
+                f"覆盖规则 {metrics.auto_matched_rules}/{metrics.total_rules} 条"
+                f"（空命中 {metrics.auto_empty_rules} 条），自动候选共 {metrics.auto_total_candidates} 处"
+            ),
+            (
+                f"- **S2 人工辅助与最终生效（单独计列）**: "
+                f"人工介入 {metrics.human_intervened_rules} 条规则"
+                f"（+{metrics.human_added_total} 新增 / -{metrics.human_removed_total} 排除），"
+                f"最终生效覆盖 {metrics.effective_matched_rules}/{metrics.total_rules} 条，"
+                f"送审候选共 {metrics.effective_total_candidates} 处"
+            ),
+            "",
+        ]
+    )
+    return f"{base_md}\n\n{env_block}"
+
+
+def handle_verify_spec(
+    raw_arg: str,
+    repo_root: Path,
+    symbol_index: SymbolIndex | None = None,
+    retriever: Any = None,
+    *,
+    retriever_type: str = "hybrid",
+    parse_model: Any = None,
+    audit_model: Any = None,
+    budget: InvestigationBudget | None = None,
+    input_fn: Callable[[str], str] = input,
+    print_fn: Callable[[str], None] = print,
+) -> SpecAuditReport | None:
+    """执行 S1 拆解确认 -> S2 候选定位复核 -> S3 多步四态审计 -> Markdown 矩阵报告。"""
+    try:
+        parsed_args = _parse_verify_spec_args(raw_arg)
+    except ValueError as exc:
+        print_fn(f"⚠️ {exc}\n")
+        return None
+
+    default_root = repo_root.resolve()
+    target_root = (
+        Path(parsed_args.repo_override).resolve()
+        if parsed_args.repo_override
+        else default_root
+    )
+    if not target_root.is_dir():
+        print_fn(f"❌ 指定的目标工程目录不存在: {target_root}\n")
+        return None
+
+    spec_path = _resolve_spec_file(
+        parsed_args.spec_file,
+        default_repo_root=default_root,
+        target_repo_root=target_root,
+    )
+    if spec_path is None:
+        print_fn(f"⚠️ 未找到规约文件: {parsed_args.spec_file}\n")
+        return None
+
+    # 1. 目标工程索引就绪（与当前启动目录一致时直接复用，切换 --repo 时就地构建）
+    same_repo = target_root == default_root
+    target_symbol_index = symbol_index if (same_repo and symbol_index is not None) else None
+    target_retriever = retriever if (same_repo and retriever is not None) else None
+    if target_symbol_index is None:
+        print_fn(f"📦 正在为目标工程构建符号索引: {target_root} ...")
+        target_symbol_index = build_symbol_index(target_root)
+    if target_retriever is None:
+        print_fn(f"📦 正在为目标工程构建检索索引 ({retriever_type}): {target_root} ...")
+        target_retriever = build_retriever_for_project(
+            target_root,
+            retriever_type=retriever_type,
+        )
+
+    # 2. S1: 规范条款拆解 + 人工确认环 ①
+    print_fn(f"\n📜 [S1] 正在拆解规约文档: {spec_path.as_posix()} ...")
+    parse_result = parse_spec_rules(
+        spec_path,
+        project_root=Path.cwd(),
+        model=parse_model,
+    )
+    if parsed_args.auto_confirm:
+        for warn in parse_result.warnings:
+            print_fn(f"⚠️ {warn}")
+        confirm_all_drafts(parse_result.rules)
+        active_rules = parse_result.active_rules()
+        print_fn(f"✅ [--yes] 已自动确认全部 {len(active_rules)} 条规则草稿。")
+    else:
+        active_rules = interactive_confirm_rules(
+            parse_result,
+            input_fn=input_fn,
+            print_fn=print_fn,
+        )
+
+    if not active_rules:
+        print_fn("⚠️ 没有已激活的待核查规则，本次规范审计已结束。\n")
+        return None
+
+    # 3. S2: 规则与代码候选双路粗筛 + 人工复核环 ②
+    print_fn(f"\n🗺️  [S2] 正在为 {len(active_rules)} 条规则定位候选实现 ...")
+    candidate_map = match_rules_to_candidates(
+        active_rules,
+        project_root=target_root,
+        symbol_index=target_symbol_index,
+        retriever=target_retriever,
+    )
+    if parsed_args.auto_confirm:
+        print_fn(format_candidate_map_report(candidate_map))
+    else:
+        candidate_map = interactive_review_candidates(
+            candidate_map,
+            symbol_index=target_symbol_index,
+            input_fn=input_fn,
+            print_fn=print_fn,
+        )
+
+    # 4. S3: 逐条多步调查与四态审计判定
+    print_fn(
+        f"\n🕵️  [S3] 开始对 {len(candidate_map.entries)} 条规则执行多步取证与四态审计 ..."
+    )
+    report = audit_candidate_map(
+        candidate_map,
+        model=audit_model,
+        symbol_index=target_symbol_index,
+        budget=budget,
+    )
+    markdown_report = _build_full_spec_report_markdown(
+        spec_path=spec_path,
+        candidate_map=candidate_map,
+        report=report,
+        retriever_type=retriever_type,
+        auto_confirm=parsed_args.auto_confirm,
+    )
+    print_fn("\n" + markdown_report + "\n")
+
+    if parsed_args.out_path:
+        out_file = Path(parsed_args.out_path)
+        if not out_file.is_absolute():
+            out_file = (Path.cwd() / out_file).resolve()
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        out_file.write_text(markdown_report, encoding="utf-8")
+        print_fn(f"💾 审计报告已写入: {out_file.as_posix()}\n")
+
+    return report
 
 
 
@@ -259,6 +514,7 @@ def main() -> None:
     print("  - 符号查询：输入 /symbols <符号名或FQN> (例如: /symbols BuildEngine)")
     print("  - 模块依赖：输入 /deps <模块全名> (例如: /deps minisite.cli)")
     print("  - 多步调查：输入 /investigate <问题> (例如: /investigate execute_query 是如何调用模型与判卷的)")
+    print("  - 规范核查：输入 /verify-spec <规约文件> [--repo <路径>] [--out <报告.md>] [--yes]")
     print("  - 退出程序：输入 exit")
     print("=" * 64 + "\n")
 
@@ -333,6 +589,16 @@ def main() -> None:
                 symbol_index=symbol_index,
             )
             continue
+        if input_question == "/verify-spec" or input_question.startswith("/verify-spec "):
+            handle_verify_spec(
+                input_question[len("/verify-spec"):].strip(),
+                repo_root=repo_root,
+                symbol_index=symbol_index,
+                retriever=retriever,
+                retriever_type=args.retriever,
+            )
+            continue
+
         # 3. 普通提问：直接交由统一业务内核 execute_query 处理
         print("Agent 正在分析并检索代码 ...\n")
         res = execute_query(

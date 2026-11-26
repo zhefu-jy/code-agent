@@ -791,3 +791,33 @@
 
 ### 4. 带 `input()` 的交互函数怎么写才能测？
 * **做法**：`interactive_confirm_rules` 里不写死内建的 `input` 和 `print`，而是留两个默认参数 `input_fn=input` 和 `print_fn=print`。平时终端用啥也不用传，写单测时传个列表迭代器和空列表进去，就能把回车确认、改字段、跳过、`all`、`q`、补录全测一遍，不会卡死终端。
+
+---
+
+## 二十二、W11 S2 & S3 & W 候选绑定、四态审计与 CLI 实跑避坑
+
+### 1. 自动定位与人工辅助必须“软删除 + 双口径”分离，严禁混报成绩
+* **坑在哪里**：如果人工排除噪音候选时直接从列表中 `pop()` 删除，或者把人工新增的候选和自动定位结果混在同一个计数里，后续复盘时就再也分不清“到底是检索系统自己找准了，还是全靠人手动补进去的”。
+* **怎么解决**：
+  - 在 `rule_matcher.py` 中，人工排除采用 `excluded_by_human = True` 软删除（从 `effective_candidates` 移出，但仍保留在 `auto_candidates` 中）；人工新增单独标记 `CandidateSource.HUMAN_ADDED` 并记入 `interventions`；
+  - `summary_metrics()` 与报告输出严格分列 **S2 自主定位成绩**（纯自动）和 **人工辅助与最终生效**；
+  - 同时路线 B（混合检索）强制过滤 `chunk.source_type != "code"` 且截断 `norm_score < 0.35`，避免把规约 Markdown 自己或低分尾噪召回进候选集。
+
+### 2. 四态审计闸门的两条红线：“零命中不乱判违规”与“确认缺失允许判违规”
+* **坑在哪里**：
+  - 搜索不到实现时，模型容易直接下 `VIOLATED`（实际可能是没搜对词、外部配置不在仓内或工程无该场景）；
+  - 反过来，如果一刀切规定“没找到某行代码就只能判证据不足”，那么像 R3 这种“异常分支里漏写 `logging.warning`”的真实违规又会被全部洗成 `INSUFFICIENT_EVIDENCE`。
+* **怎么解决**：
+  - `_apply_verdict_guard` 强制要求 `VIOLATED` 至少包含 1 处账本核验通过的正文证据（`VERIFIED_BODY`）：搜索 0 命中时模型即便硬判 `VIOLATED`，也会被程序直接降级为 `INSUFFICIENT_EVIDENCE` 并保留程序实录的 `investigated_scope`；
+  - 当模型确实读取了 `BuildEngine.build`（`minisite/engine.py:80-102`）与上游调用方 `run_cli`（`minisite/cli.py:55-85`）正文、证实在适用范围内必需行为缺失时，账本存在充分 `VERIFIED_BODY`，正常放行 `VIOLATED`；
+  - 对“全仓禁用 `os.system`”这类否定式条款，仅在 `has_zero_hit_search and not inv_result.evidence_items` 时放行无正文 `COMPLIANT`，不强迫模型编造行号。
+
+### 3. 真机实跑挖出的典型幻觉：把离散 `search_text` 单行私自拼成连续区间
+* **遇到的问题**：在纯自动基线 `eval/runs/spec_verify_001.md` 中，R6/R7 业务判断为 `NOT_APPLICABLE` 本身合理，但都被程序防幻觉闸门强制降级成了 `INSUFFICIENT_EVIDENCE`。
+* **坑在哪里**：模型调用 `search_text("import ...")` 拿到了 `minisite/config.py` 的第 3、4、5、6、8 行单行命中（第 7 行是空行未返回）以及 `minisite/models.py` 的第 3~7 行单行命中，写总结时顺手把这些离散单行拼成了连续区间 `[minisite/config.py:3-8]`、`[minisite/models.py:3-7]`。而 `EvidenceLedger` 故意**只对 `SNIPPET_BODY` 做区间合并，不对 `TEXT_MATCH` 合并**（单行搜索无法证明中间跳过行的内容），于是判定为 `UNVERIFIED` 并触发降级。
+* **后续处理**：基线阶段保持诚实记录、不魔改迎合样本；留待 W12 加固时在审计 Prompt 中明确约束“离散 `search_text` 单行命中不得合并为 `a-b` 区间，需引用区间必须先调 `read_file_snippet`”。
+
+### 4. CLI `/verify-spec` 的 Windows 路径、REPL 防崩与 PyCharm 工作目录暗坑
+* **Windows 反斜杠与 REPL 容错**：在 Windows 下对命令行参数切词必须使用 `shlex.split(raw_arg, posix=False)` 并手动剥离外层引号，否则 `posix=True` 会直接吞掉 `eval\fixtures\...` 的反斜杠；在交互循环里不能直接让 `argparse.parse_args()` 抛 `SystemExit`，否则输错一个参数整个 CLI 会直接退出。
+* **PyCharm 工作目录坑**：在 PyCharm 中直接右键运行 `src/code_agent/cli.py`，默认 Working directory 是 `src/code_agent` 而非仓库根目录，导致 `--repo .` 扫错目录且找不到 `eval/fixtures/sample_spec.md`。将 Run Configuration 的 Working directory 设为仓库根目录，或在根目录以 `python -m code_agent.cli --repo ...` 启动即可彻底解决。
+* **实测人工确认环收益**：同一份 `sample_spec.md` 在 `mini_repo` 上对照，走人工确认环（S1 修正 R5 缺失配置口径 + 跳过 R6/R7，S2 排除 R5 噪音 `C3`）对比 `--yes` 纯自动：工具调用 `56 → 36`（-35.7%）、Token `157,980 → 106,821`（-32.4%）、耗时 `58.19s → 36.25s`（-37.7%）、程序降级 `2 → 0`。

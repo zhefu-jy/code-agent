@@ -2,6 +2,29 @@
 
 > 记录每日实际完成的模块与代码，沉淀对话中提出的有价值技术问题。
 
+## 2026-11-26 (W11 S2 & S3 & W · 候选定位、四态审计、CLI /verify-spec 与双口径实跑)
+
+### 一、今日实际做了啥
+1. **实现规则与代码候选双路定位与人工复核环（`src/code_agent/spec/rule_matcher.py` + `tests/test_rule_matcher.py`）**：
+   - 结合静态 `SymbolIndex`（精确 FQN / 短名 / 受控子串）与混合检索（屏蔽非代码切块与 `< 0.35` 低分尾噪）构建 `RuleCandidateMap`，按文件路径与符号尾名合并双路重合候选。
+   - 实现 `add_candidate` / `remove_candidate`（软删除 `excluded_by_human`）与终端交互复核环 `interactive_review_candidates`，`summary_metrics()` 与 `format_candidate_map_report()` 严格分离展示纯自动定位成绩与人工介入明细；补齐 7 项离线单测。
+2. **实现单条规则多步取证与四态审计判决（`src/code_agent/spec/rule_auditor.py` + `tests/test_rule_auditor.py`）**：
+   - 定义 `AuditVerdict`（`COMPLIANT` / `VIOLATED` / `INSUFFICIENT_EVIDENCE` / `NOT_APPLICABLE`）、`RuleAuditResult`、`SpecAuditReport` 与 `format_audit_report_markdown()` 矩阵渲染器，驱动 W10 `Investigator` 逐条取证。
+   - 落地程序级防幻觉降级闸门 `_apply_verdict_guard`：拦截模型异常、兜底总结、伪造 `[E#]`、未核验行号、裸文本未绑定，以及缺少 `VERIFIED_BODY` 支撑的 `VIOLATED` / `COMPLIANT`（仅对全仓 `search_text` 零命中的禁用接口类条款放行 `COMPLIANT`）；补齐 8 项离线单测。
+3. **构造三类边界规范样本并接入 CLI `/verify-spec`（`eval/fixtures/sample_spec.md` + `src/code_agent/cli.py` + `tests/test_verify_spec_cli.py`）**：
+   - 围绕冻结外部工程 `eval/fixtures/mini_repo` 编写覆盖数值上限（`SiteConfig.max_posts`）、异常分支与上游守卫（`BuildEngine.build`/`run_cli`）、禁用 `os.system` 替代 `subprocess`、缺失生产配置 `minisite.json` 与外部 HTTP 超时/`ConnectionError` 的测试规范样本。
+   - 在 `cli.py` 新增 `/verify-spec <spec_file> [--repo <path>] [--out <report.md>] [--yes]`，兼容 Windows 反斜杠路径、非退出参数解析、跨 `--repo` 自动重建索引及完整 S1→S2→S3→Markdown 落盘流水线；补齐 4 项离线单测（锁定零命中禁止判 `VIOLATED` 与上游守卫缺失允许判 `VIOLATED`）。
+4. **真机 DeepSeek 双口径实跑对照与全量回归验收**：
+   - 纯自动基线（`--yes`）产出 `eval/runs/spec_verify_001.md`：拆解 7 条规则，S2 自主覆盖 5/7（15 处候选），S3 消耗 56 次工具 / 157,980 tokens / 58.19s（3 符合 / 1 违规 / 2 降级证据不足 / 1 不适用），其中 R3 精准追查上游 `run_cli` 后判 `VIOLATED`，R6/R7 因把离散 `search_text` 单行拼接成连续区间被账本拦截降级。
+   - 终端交互人工确认环产出 `eval/runs/spec_verify_001_hitl.md`：S1 修正 R5 缺失配置口径并跳过不适用的 R6/R7，S2 排除 R5 噪音候选 `C3(minisite/__init__.py)`；S3 降至 36 次工具（-35.7%）/ 106,821 tokens（-32.4%）/ 36.25s（-37.7%），结果 3 符合 / 1 违规 / 1 证据不足 / 0 程序降级，全部命中预期。
+   - 门禁验收：`pytest tests/test_rule_parser.py tests/test_rule_matcher.py tests/test_rule_auditor.py tests/test_verify_spec_cli.py -v`（25 passed in 1.50s）、全仓 `pytest`（172 passed in 26.44s）、`mypy src eval`（36 files 0 issues）。
+
+### 二、今天聊到的问题（后续复习用）
+1. 在 PyCharm 直接运行 `cli.py` 时，为什么相对路径 `eval/fixtures/sample_spec.md` 会报找不到文件，工作目录应如何配置？
+2. 人工确认环在 S1（修正 R5 口径、跳过明显不适用的 R6/R7）与 S2（排除 `minisite/__init__.py` 噪音候选）实际节省了多少工具调用与 Token，为什么会扭转 R5 的最终判决？
+
+---
+
 ## 2026-11-25 (W11 S1 · 规范条款拆解与人工确认环)
 
 ### 一、今日实际做了啥
